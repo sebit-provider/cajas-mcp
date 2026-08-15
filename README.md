@@ -103,10 +103,40 @@ CAJAS MCP supports a non-mutating standards workflow:
 
 Reference resolution identifies locators such as `IFRS 15.22-30` or `IAS 36.9-14`. It does not return or store full IFRS/GAAP text, does not copy official headings into CAJAS titles, and does not create standards, templates, event links, approvals, or confirmations.
 
+## Production Authentication
+
+CAJAS MCP uses the existing CAJAS identity boundary. It does not create MCP-specific user accounts and it does not access Supabase directly.
+
+Remote MCP data access requires a bearer token for the actual CAJAS user. MCP forwards that token to the authenticated CAJAS API, where `/api/auth/me`, `org_memberships`, `require_org_user`, and the existing role checks remain the source of truth.
+
+For production, do not configure a shared Railway token:
+
+```text
+CAJAS_MCP_ENV=production
+CAJAS_API_BEARER_TOKEN=
+```
+
+If `CAJAS_MCP_ENV=production` and `CAJAS_API_BEARER_TOKEN` is set, the server refuses to start. `CAJAS_API_BEARER_TOKEN` is only for local development or smoke tests.
+
+The HTTP MCP endpoint can run as an OAuth protected resource:
+
+```text
+CAJAS_MCP_AUTH_ENABLED=true
+CAJAS_MCP_AUTH_RESOURCE_URL=https://sebit-mcp.com/mcp
+CAJAS_MCP_AUTH_ISSUER_URL=https://your-cajas-auth.example
+CAJAS_MCP_OAUTH_SCOPES_SUPPORTED=cajas:read,cajas:raw:write,cajas:coa:write,cajas:criterion:read
+```
+
+When enabled, unauthenticated `/mcp` requests receive `401` with `WWW-Authenticate` and protected-resource metadata. Presented access tokens are validated against CAJAS `/api/auth/me`, then forwarded per request to the CAJAS API. OAuth scopes only describe broad request categories; CAJAS workspace roles still decide whether a read or mutation is allowed.
+
+Workspace selection remains explicit. `cajas.list_workspaces` works without an `org_id`; workspace-scoped tools require `org_id`, which is forwarded as `x-org-id` and verified by CAJAS backend membership checks.
+
+RAW and CoA import preview sessions are process-local and bound to the bearer token, organization, and profile context. A preview ID created by one token cannot be replayed by another token.
+
 ## Planned
 
 - Human-approved Criterion/Interpretation creation and Event linkage.
-- OAuth protected-resource production auth.
+- CAJAS authorization-code login facade if a dedicated OAuth authorization server is required.
 
 ## Non-Goals
 

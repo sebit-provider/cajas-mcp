@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any
 
 from mcp.server.fastmcp import Context
+from mcp.server.auth.provider import AccessToken, TokenVerifier
 
+from .client import CajasClient
 from .config import Settings
 from .errors import CajasMcpError
 
@@ -52,3 +56,38 @@ def resolve_bearer_token(settings: Settings, ctx: Context | None = None, explici
         raise CajasMcpError("AUTH_REQUIRED", "Bearer token is empty.", status_code=401, requires_user_action=True)
     return token
 
+
+def token_binding(settings: Settings, token: str) -> str:
+    material = token.encode("utf-8")
+    if settings.session_secret:
+        digest = hmac.new(settings.session_secret.encode("utf-8"), material, hashlib.sha256).hexdigest()
+    else:
+        digest = hashlib.sha256(material).hexdigest()
+    return f"tok_{digest[:32]}"
+
+
+class CajasTokenVerifier(TokenVerifier):
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not token:
+            return None
+        client = CajasClient(self.settings)
+        try:
+            result = await client.get_me(token=token)
+        except CajasMcpError:
+            return None
+        finally:
+            await client.aclose()
+        payload = result.get("me") or {}
+        user = payload.get("user") if isinstance(payload, dict) else {}
+        user_id = str((user or {}).get("id") or (user or {}).get("email") or "cajas-user").strip()
+        if not user_id:
+            return None
+        return AccessToken(
+            token=token,
+            client_id=user_id,
+            scopes=list(self.settings.oauth_scopes_supported),
+            resource=self.settings.auth_resource_url,
+        )

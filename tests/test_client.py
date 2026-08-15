@@ -96,6 +96,26 @@ class CajasClientTests(unittest.TestCase):
         self.assertTrue(result["history_available"])
         self.assertEqual(result["items"][0]["group_id"], "group-1")
 
+    def test_get_me_calls_cajas_identity_endpoint(self) -> None:
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["path"] = request.url.path
+            seen["authorization"] = request.headers.get("authorization") or ""
+            return httpx.Response(200, json={"ok": True, "user": {"id": "user-1"}})
+
+        async def run() -> dict:
+            client = CajasClient(_settings(), http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://cajas.example.test"))
+            try:
+                return await client.get_me(token="user-token")
+            finally:
+                await client.aclose()
+
+        result = asyncio.run(run())
+        self.assertEqual(seen["path"], "/api/auth/me")
+        self.assertEqual(seen["authorization"], "Bearer user-token")
+        self.assertEqual(result["me"]["user"]["id"], "user-1")
+
     def test_smart_excel_preview_and_execute_paths(self) -> None:
         seen: list[tuple[str, str, dict]] = []
 

@@ -23,8 +23,9 @@ class ImportSessionTests(unittest.TestCase):
             inferred_mapping={"date": "transaction_date", "account code": "account_code", "amount": "amount"},
             mapping_candidates=[],
         )
-        session = store.create_import(file={"name": "x.csv"}, sheets={"Sheet1": sheet}, warnings=[], ttl=1)
+        session = store.create_import(actor_binding="actor-a", file={"name": "x.csv"}, sheets={"Sheet1": sheet}, warnings=[], ttl=1)
         preview = store.create_preview(
+            actor_binding=session.actor_binding,
             import_session_id=session.import_session_id,
             sheet_name="Sheet1",
             org_id="org",
@@ -38,6 +39,7 @@ class ImportSessionTests(unittest.TestCase):
             can_import=True,
             ttl=1,
         )
+        self.assertEqual(preview.actor_binding, "actor-a")
         self.assertIsNotNone(store.get_preview(preview.preview_id))
         preview.expires_at = time.time() - 1
         self.assertIsNone(store.get_preview(preview.preview_id))

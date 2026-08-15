@@ -34,6 +34,9 @@ class CapabilityAndPolicyTests(unittest.TestCase):
         self.assertFalse(payload["capabilities"]["event_standard_link_mutation"])
         self.assertFalse(payload["capabilities"]["event_confirmation"])
         self.assertEqual(payload["levels"]["L1"], "EXTERNAL_STANDARD")
+        self.assertTrue(payload["authentication"]["required_for_data_access"])
+        self.assertEqual(payload["authentication"]["type"], "bearer-forwarding")
+        self.assertFalse(payload["authentication"]["shared_production_token_allowed"])
 
     def test_forbidden_actions_are_not_allowed(self) -> None:
         for action in FORBIDDEN_MCP_ACTIONS:

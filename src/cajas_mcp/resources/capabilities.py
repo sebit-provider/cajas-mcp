@@ -7,7 +7,7 @@ from cajas_mcp import __version__
 PROTOCOL_VERSION = "2025-11-25"
 
 
-def capabilities_payload(*, external_context_enabled: bool = False) -> dict[str, Any]:
+def capabilities_payload(*, external_context_enabled: bool = False, auth_enabled: bool = False) -> dict[str, Any]:
     return {
         "name": "CAJAS MCP",
         "version": __version__,
@@ -42,6 +42,11 @@ def capabilities_payload(*, external_context_enabled: bool = False) -> dict[str,
             "L1": "EXTERNAL_STANDARD",
             "L2": "INTERNAL_POLICY",
             "L3": "TEMPORARY_OR_SUBJECTIVE",
+        },
+        "authentication": {
+            "required_for_data_access": True,
+            "type": "oauth-protected-resource" if auth_enabled else "bearer-forwarding",
+            "shared_production_token_allowed": False,
         },
         "mutation_boundary": {
             "allowed": ["READ", "SEARCH", "INSPECT", "ANALYZE", "PREVIEW", "RECOMMEND", "PROPOSE", "PREPARE", "IMPORT"],

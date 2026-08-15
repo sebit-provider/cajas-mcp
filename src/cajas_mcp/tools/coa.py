@@ -4,7 +4,7 @@ from mcp.server.fastmcp import Context, FastMCP
 
 from cajas_mcp.adapters.files import RawFileAdapter
 from cajas_mcp.adapters.mapping import infer_coa_column_mapping
-from cajas_mcp.auth import resolve_bearer_token
+from cajas_mcp.auth import resolve_bearer_token, token_binding
 from cajas_mcp.client import CajasClient
 from cajas_mcp.config import Settings
 from cajas_mcp.errors import CajasMcpError, error_payload, ok
@@ -29,7 +29,7 @@ def register_coa_tools(mcp: FastMCP, settings: Settings) -> None:
         sample_rows: int = 5,
     ) -> dict:
         try:
-            resolve_bearer_token(settings, ctx)
+            token = resolve_bearer_token(settings, ctx)
             adapter = RawFileAdapter(settings)
             file_info, sheets, warnings = await adapter.inspect(
                 ctx=ctx,
@@ -41,6 +41,7 @@ def register_coa_tools(mcp: FastMCP, settings: Settings) -> None:
             )
             coa_sheets = {name: _with_coa_mapping(sheet) for name, sheet in sheets.items()}
             session = IMPORT_SESSION_STORE.create_import(
+                actor_binding=token_binding(settings, token),
                 file={**file_info, "domain": "coa"},
                 sheets=coa_sheets,
                 warnings=warnings,
@@ -83,6 +84,9 @@ def register_coa_tools(mcp: FastMCP, settings: Settings) -> None:
             session = IMPORT_SESSION_STORE.get_import(import_session_id)
             if not session:
                 raise CajasMcpError("COA_PREVIEW_EXPIRED", "CoA import session was not found or has expired.", requires_user_action=True)
+            actor_binding = token_binding(settings, token)
+            if session.actor_binding != actor_binding:
+                raise CajasMcpError("PERMISSION_DENIED", "CoA import session belongs to a different authenticated user.", requires_user_action=True)
             sheet = _resolve_sheet(session.sheets, sheet_name)
             column_mapping = mapping or sheet.inferred_mapping
             _validate_coa_mapping(column_mapping)
@@ -101,6 +105,7 @@ def register_coa_tools(mcp: FastMCP, settings: Settings) -> None:
             }
             can_import = bool(preview.get("can_import")) and bool(accepted_ids)
             preview_session = IMPORT_SESSION_STORE.create_coa_preview(
+                actor_binding=actor_binding,
                 import_session_id=import_session_id,
                 sheet_name=sheet.name,
                 org_id=org_id,
@@ -149,6 +154,9 @@ def register_coa_tools(mcp: FastMCP, settings: Settings) -> None:
             preview = IMPORT_SESSION_STORE.get_coa_preview(preview_id)
             if not preview:
                 raise CajasMcpError("COA_PREVIEW_EXPIRED", "CoA preview was not found or has expired.", requires_user_action=True)
+            actor_binding = token_binding(settings, token)
+            if preview.actor_binding != actor_binding:
+                raise CajasMcpError("PERMISSION_DENIED", "CoA preview belongs to a different authenticated user.", requires_user_action=True)
             if preview.org_id != org_id:
                 raise CajasMcpError("PERMISSION_DENIED", "Preview belongs to a different org context.", requires_user_action=True)
             clean_ids = {str(value).strip() for value in (accepted_operation_ids or []) if str(value).strip()}
@@ -172,7 +180,7 @@ def register_coa_tools(mcp: FastMCP, settings: Settings) -> None:
             rows = [_upload_row(rows_by_op[op_id]) for op_id in sorted(rows_by_op)]
             if not rows:
                 raise CajasMcpError("COA_PREVIEW_REQUIRED", "No accepted operations contain importable rows.", requires_user_action=True)
-            cache_key = f"coa:{org_id}:{preview_id}:{idempotency_key}" if idempotency_key else ""
+            cache_key = f"coa:{actor_binding}:{org_id}:{preview_id}:{idempotency_key}" if idempotency_key else ""
             if cache_key:
                 cached = IMPORT_SESSION_STORE.get_idempotent_result(cache_key)
                 if cached:

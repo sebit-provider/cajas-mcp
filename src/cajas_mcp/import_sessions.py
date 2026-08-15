@@ -22,6 +22,7 @@ class ParsedSheet:
 @dataclass
 class ImportSession:
     import_session_id: str
+    actor_binding: str
     file: dict[str, Any]
     sheets: dict[str, ParsedSheet]
     warnings: list[str]
@@ -32,6 +33,7 @@ class ImportSession:
 @dataclass
 class PreviewSession:
     preview_id: str
+    actor_binding: str
     import_session_id: str
     sheet_name: str
     org_id: str
@@ -50,6 +52,7 @@ class PreviewSession:
 @dataclass
 class CoaPreviewSession:
     preview_id: str
+    actor_binding: str
     import_session_id: str
     sheet_name: str
     org_id: str
@@ -71,11 +74,20 @@ class ImportSessionStore:
         self._coa_previews: dict[str, CoaPreviewSession] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
 
-    def create_import(self, *, file: dict[str, Any], sheets: dict[str, ParsedSheet], warnings: list[str], ttl: int) -> ImportSession:
+    def create_import(
+        self,
+        *,
+        actor_binding: str,
+        file: dict[str, Any],
+        sheets: dict[str, ParsedSheet],
+        warnings: list[str],
+        ttl: int,
+    ) -> ImportSession:
         self.purge_expired()
         now = time.time()
         session = ImportSession(
             import_session_id=f"imp_{uuid.uuid4().hex}",
+            actor_binding=actor_binding,
             file=file,
             sheets=sheets,
             warnings=warnings,
@@ -92,6 +104,7 @@ class ImportSessionStore:
     def create_preview(
         self,
         *,
+        actor_binding: str,
         import_session_id: str,
         sheet_name: str,
         org_id: str,
@@ -109,6 +122,7 @@ class ImportSessionStore:
         now = time.time()
         preview = PreviewSession(
             preview_id=f"prv_{uuid.uuid4().hex}",
+            actor_binding=actor_binding,
             import_session_id=import_session_id,
             sheet_name=sheet_name,
             org_id=org_id,
@@ -133,6 +147,7 @@ class ImportSessionStore:
     def create_coa_preview(
         self,
         *,
+        actor_binding: str,
         import_session_id: str,
         sheet_name: str,
         org_id: str,
@@ -149,6 +164,7 @@ class ImportSessionStore:
         now = time.time()
         preview = CoaPreviewSession(
             preview_id=f"coa_prv_{uuid.uuid4().hex}",
+            actor_binding=actor_binding,
             import_session_id=import_session_id,
             sheet_name=sheet_name,
             org_id=org_id,

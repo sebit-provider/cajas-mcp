@@ -119,6 +119,10 @@ class CajasClient:
             ]
         return {"workspaces": memberships, "_request_id": payload.get("_request_id")}
 
+    async def get_me(self, *, token: str) -> dict[str, Any]:
+        payload = await self._request("GET", "/api/auth/me", token=token)
+        return {"me": payload, "_request_id": payload.get("_request_id")}
+
     async def search_raw_entries(self, *, token: str, org_id: str, filters: dict[str, Any]) -> dict[str, Any]:
         params = {
             "status": filters.get("status"),
