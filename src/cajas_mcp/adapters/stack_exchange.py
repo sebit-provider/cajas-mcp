@@ -40,7 +40,7 @@ class StackExchangeProvider:
         }
         if self.key:
             params["key"] = self.key
-        response = await self._client.get("/search/advanced", params=params)
+        response = await self._client.get("/search/excerpts", params=params)
         if response.status_code == 429:
             self.last_metadata = {"http_status": 429}
             return []
@@ -58,12 +58,13 @@ class StackExchangeProvider:
         for item in payload.get("items") or []:
             if not isinstance(item, dict):
                 continue
+            summary = unescape(str(item.get("excerpt") or item.get("body") or " ".join(str(tag) for tag in item.get("tags") or [])))
             results.append(
                 ExternalSearchResult(
                     provider="stack_exchange",
                     title=unescape(str(item.get("title") or "")),
                     url=str(item.get("link") or ""),
-                    summary=" ".join(str(tag) for tag in item.get("tags") or []),
+                    summary=summary,
                     question_id=item.get("question_id") if isinstance(item.get("question_id"), int) else None,
                     score=item.get("score") if isinstance(item.get("score"), int) else None,
                     question_score=item.get("score") if isinstance(item.get("score"), int) else None,

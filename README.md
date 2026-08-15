@@ -90,6 +90,8 @@ Supported modes are `SUPPORT`, `CHALLENGE`, and `BALANCED`. The default is `BALA
 
 Community validation is opt-in only. Low internal confidence does not automatically call Stack Exchange. The validation result is returned as an independent `community_validation` block and does not change the internal recommendation score.
 
+Stack Exchange queries use privacy-safe generic operational and technical concepts. The first pass uses short neutral queries such as `cloud infrastructure saas` or `development environment cloud`. When an initial query returns no useful evidence, CAJAS MCP may retry with a small number of narrower decomposed concept queries.
+
 Stack Exchange content is public operational context, not accounting authority. CAJAS MCP treats all community content as `UNTRUSTED_EXTERNAL_DATA`; it never uses community results to create standards, determine accounting treatment, approve, sign, finalize, split, merge, or mutate Assembly/Event records.
 
 The Stack Exchange API key is server-side only:
@@ -98,6 +100,8 @@ The Stack Exchange API key is server-side only:
 STACKEXCHANGE_ENABLED=true
 STACKEXCHANGE_KEY=
 STACKEXCHANGE_SITE=stackoverflow
+STACKEXCHANGE_MAX_QUERIES=4
+STACKEXCHANGE_MAX_SEARCH_REQUESTS=4
 ```
 
 No Stack Exchange user login is required. Provider failures, rate limits, or disabled configuration degrade gracefully and do not fail the core Assembly recommendation.

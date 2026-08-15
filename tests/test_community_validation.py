@@ -5,14 +5,21 @@ import json
 import unittest
 
 from cajas_mcp.adapters.external_context import ExternalSearchResult
-from cajas_mcp.community_validation import CommunityValidationRequest, CommunityValidationService, parse_community_validation
+from cajas_mcp.community_validation import _CACHE, CommunityValidationRequest, CommunityValidationService, parse_community_validation
 from cajas_mcp.schemas.raw import RawEntry
 from cajas_mcp.services import AssemblyRecommendationEngine
 
 
 class FakeCommunityProvider:
-    def __init__(self, results: list[ExternalSearchResult] | None = None, *, fail: Exception | None = None) -> None:
+    def __init__(
+        self,
+        results: list[ExternalSearchResult] | None = None,
+        *,
+        results_by_query: dict[str, list[ExternalSearchResult]] | None = None,
+        fail: Exception | None = None,
+    ) -> None:
         self.results = results or []
+        self.results_by_query = results_by_query or {}
         self.fail = fail
         self.calls: list[str] = []
         self.site = "stackoverflow"
@@ -22,6 +29,8 @@ class FakeCommunityProvider:
         self.calls.append(query)
         if self.fail:
             raise self.fail
+        if query in self.results_by_query:
+            return self.results_by_query[query]
         return self.results
 
     async def extract_work_patterns(self, results: list[ExternalSearchResult]) -> list[str]:
@@ -38,7 +47,7 @@ def raw(description: str = "consulting deliverable billing accounts receivable c
     )
 
 
-def result(title: str, summary: str, tags: list[str] | None = None) -> ExternalSearchResult:
+def result(title: str, summary: str, tags: list[str] | None = None, *, question_id: int = 123) -> ExternalSearchResult:
     return ExternalSearchResult(
         provider="stackoverflow",
         title=title,
@@ -46,13 +55,16 @@ def result(title: str, summary: str, tags: list[str] | None = None) -> ExternalS
         summary=summary,
         tags=tags or ["workflow"],
         score=3,
-        question_id=123,
+        question_id=question_id,
         question_score=3,
         accepted_answer=True,
     )
 
 
 class CommunityValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _CACHE.clear()
+
     def test_default_omitted_does_not_call_provider(self) -> None:
         provider = FakeCommunityProvider([result("billing workflow", "same workflow process")])
         service = CommunityValidationService(provider, provider_enabled=True, cache_ttl=0)
@@ -82,12 +94,12 @@ class CommunityValidationTests(unittest.TestCase):
         self.assertEqual(output["reason"], "USER_NOT_REQUESTED")
 
     def test_explicit_enabled_calls_provider(self) -> None:
-        provider = FakeCommunityProvider([result("professional services workflow", "same process billing")])
+        provider = FakeCommunityProvider([result("cloud infrastructure workflow", "same cloud infrastructure implementation workflow")])
         service = CommunityValidationService(provider, provider_enabled=True, cache_ttl=0)
         output = asyncio.run(
             service.validate(
                 request=parse_community_validation({"enabled": True, "mode": "SUPPORT"}),
-                raw_entries=[raw()],
+                raw_entries=[raw("cloud infrastructure saas implementation")],
                 recommendations=[],
             )
         )
@@ -95,39 +107,40 @@ class CommunityValidationTests(unittest.TestCase):
         self.assertTrue(output["performed"])
         self.assertEqual(output["mode"], "SUPPORT")
 
-    def test_modes_generate_expected_query_purposes(self) -> None:
+    def test_modes_generate_neutral_query_purposes(self) -> None:
         for mode, expected in {
             "SUPPORT": {"SUPPORT"},
             "CHALLENGE": {"CHALLENGE"},
-            "BALANCED": {"SUPPORT", "CHALLENGE"},
+            "BALANCED": {"BALANCED"},
         }.items():
-            provider = FakeCommunityProvider([result("billing workflow", "same workflow process")])
+            provider = FakeCommunityProvider([result("cloud infrastructure workflow", "same cloud infrastructure workflow")])
             service = CommunityValidationService(provider, provider_enabled=True, cache_ttl=0)
             output = asyncio.run(
                 service.validate(
                     request=CommunityValidationRequest(enabled=True, mode=mode),  # type: ignore[arg-type]
-                    raw_entries=[raw()],
+                    raw_entries=[raw("cloud infrastructure saas implementation")],
                     recommendations=[],
                 )
             )
-            self.assertEqual({query["purpose"] for query in output["queries"]}, expected)
+            self.assertEqual({query["mode"] for query in output["queries"]}, expected)
+            self.assertTrue({query["purpose"] for query in output["queries"]}.issubset({"INITIAL_NEUTRAL", "FALLBACK_DECOMPOSED"}))
 
     def test_classifies_support_challenge_mixed_and_insufficient(self) -> None:
-        support_provider = FakeCommunityProvider([result("consulting billing workflow", "same workflow process together")])
+        support_provider = FakeCommunityProvider([result("cloud infrastructure workflow", "same cloud infrastructure implementation workflow together")])
         support_output = asyncio.run(
             CommunityValidationService(support_provider, provider_enabled=True, cache_ttl=0).validate(
                 request=CommunityValidationRequest(enabled=True, mode="SUPPORT"),
-                raw_entries=[raw()],
+                raw_entries=[raw("cloud infrastructure saas implementation")],
                 recommendations=[],
             )
         )
         self.assertEqual(support_output["assessment"], "SUPPORTS")
 
-        challenge_provider = FakeCommunityProvider([result("billing separate lifecycle", "separate responsibility split process")])
+        challenge_provider = FakeCommunityProvider([result("cloud infrastructure separate lifecycle", "cloud infrastructure separate responsibility split process")])
         challenge_output = asyncio.run(
             CommunityValidationService(challenge_provider, provider_enabled=True, cache_ttl=0).validate(
                 request=CommunityValidationRequest(enabled=True, mode="CHALLENGE"),
-                raw_entries=[raw()],
+                raw_entries=[raw("cloud infrastructure saas implementation")],
                 recommendations=[],
             )
         )
@@ -135,14 +148,14 @@ class CommunityValidationTests(unittest.TestCase):
 
         mixed_provider = FakeCommunityProvider(
             [
-                result("consulting billing workflow", "same workflow process together"),
-                result("billing separate lifecycle", "separate responsibility split process"),
+                result("cloud infrastructure workflow", "same cloud infrastructure workflow together", question_id=123),
+                result("cloud infrastructure separate lifecycle", "cloud infrastructure separate responsibility split process", question_id=456),
             ]
         )
         mixed_output = asyncio.run(
             CommunityValidationService(mixed_provider, provider_enabled=True, cache_ttl=0).validate(
                 request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
-                raw_entries=[raw()],
+                raw_entries=[raw("cloud infrastructure saas implementation")],
                 recommendations=[],
             )
         )
@@ -152,7 +165,7 @@ class CommunityValidationTests(unittest.TestCase):
         insufficient_output = asyncio.run(
             CommunityValidationService(irrelevant_provider, provider_enabled=True, cache_ttl=0).validate(
                 request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
-                raw_entries=[raw()],
+                raw_entries=[raw("cloud infrastructure saas implementation")],
                 recommendations=[],
             )
         )
@@ -174,7 +187,7 @@ class CommunityValidationTests(unittest.TestCase):
         failed = asyncio.run(
             CommunityValidationService(failing_provider, provider_enabled=True, cache_ttl=0).validate(
                 request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
-                raw_entries=[raw()],
+                raw_entries=[raw("cloud infrastructure saas implementation")],
                 recommendations=[],
             )
         )
@@ -208,6 +221,99 @@ class CommunityValidationTests(unittest.TestCase):
             "abc corp",
         ):
             self.assertNotIn(forbidden, serialized_queries)
+
+    def test_production_example_generates_concrete_short_queries(self) -> None:
+        provider = FakeCommunityProvider([])
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
+                raw_entries=[
+                    raw("CAJAS \ud50c\ub7ab\ud3fc \uac1c\ubc1c\ud658\uacbd \uad6c\ucd95"),
+                    raw("\ud074\ub77c\uc6b0\ub4dc \uc6b4\uc601 \uc218\uc218\ub8cc \uc815\uc0b0"),
+                    raw("\uc5f0\uac04 SaaS \uc774\uc6a9\uad8c \uc120\uae09 \ucc98\ub9ac"),
+                ],
+                recommendations=[],
+            )
+        )
+        queries = [item["query"] for item in output["query_strategy"]["initial_queries"]]
+        serialized = " ".join(queries).lower()
+        self.assertIn("development environment", serialized)
+        self.assertIn("cloud infrastructure", serialized)
+        self.assertIn("saas", serialized)
+        for abstract in ("same workflow", "operational process", "separate lifecycle", "responsibility process"):
+            self.assertNotIn(abstract, serialized)
+
+    def test_korean_mapping_preserves_generic_search_concepts(self) -> None:
+        provider = FakeCommunityProvider([])
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="SUPPORT"),
+                raw_entries=[raw("\uac1c\ubc1c\ud658\uacbd \uad6c\ucd95 \ud074\ub77c\uc6b0\ub4dc \uc6b4\uc601 SaaS \uc774\uc6a9\uad8c")],
+                recommendations=[],
+            )
+        )
+        serialized = json.dumps(output["queries"]).lower()
+        self.assertIn("development environment", serialized)
+        self.assertIn("cloud infrastructure", serialized)
+        self.assertIn("saas", serialized)
+        self.assertIn("subscription", serialized)
+
+    def test_public_technology_identifiers_are_preserved(self) -> None:
+        provider = FakeCommunityProvider([])
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
+                raw_entries=[raw("AWS EC2 NAT Gateway \uc6b4\uc601")],
+                recommendations=[],
+            )
+        )
+        serialized = json.dumps(output["queries"]).lower()
+        self.assertIn("aws", serialized)
+        self.assertIn("ec2", serialized)
+        self.assertIn("nat", serialized)
+        self.assertIn("gateway", serialized)
+
+    def test_fallback_runs_when_initial_queries_have_zero_recall(self) -> None:
+        provider = FakeCommunityProvider(
+            results_by_query={
+                "cloud infrastructure saas implementation": [],
+                "cloud infrastructure implementation": [],
+                "cloud infrastructure saas": [result("cloud infrastructure deployment", "cloud infrastructure setup")],
+            }
+        )
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0, max_search_requests=3).validate(
+                request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
+                raw_entries=[raw("\ud074\ub77c\uc6b0\ub4dc \uad6c\ucd95 SaaS")],
+                recommendations=[],
+            )
+        )
+        self.assertTrue(output["query_strategy"]["fallback_used"])
+        self.assertLessEqual(output["query_strategy"]["requests_made"], 3)
+        self.assertGreaterEqual(output["relevant_sources"], 1)
+
+    def test_duplicate_question_ids_are_counted_once(self) -> None:
+        duplicate = result("cloud infrastructure workflow", "same workflow cloud infrastructure")
+        provider = FakeCommunityProvider([duplicate, duplicate])
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
+                raw_entries=[raw("\ud074\ub77c\uc6b0\ub4dc \uc6b4\uc601 SaaS")],
+                recommendations=[],
+            )
+        )
+        self.assertEqual(output["sources_checked"], 1)
+
+    def test_query_label_does_not_force_classification(self) -> None:
+        provider = FakeCommunityProvider([result("cloud infrastructure separate lifecycle", "cloud infrastructure separate responsibility split process")])
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="SUPPORT"),
+                raw_entries=[raw("cloud infrastructure saas implementation")],
+                recommendations=[],
+            )
+        )
+        self.assertEqual(output["evidence"][0]["classification"], "CONTRADICTING")
 
     def test_prompt_injection_is_untrusted_data_only(self) -> None:
         provider = FakeCommunityProvider(

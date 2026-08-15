@@ -100,6 +100,8 @@ def register_assembly_tools(mcp: FastMCP, settings: Settings) -> None:
                 provider,
                 provider_enabled=bool(settings.stackexchange_enabled),
                 cache_ttl=settings.external_cache_ttl,
+                max_queries=settings.stackexchange_max_queries,
+                max_search_requests=settings.stackexchange_max_search_requests,
             )
             result["community_validation"] = await validation_service.validate(
                 request=validation_request,

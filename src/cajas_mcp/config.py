@@ -43,6 +43,8 @@ class Settings:
     stackexchange_enabled: bool = False
     stackexchange_key: str | None = None
     stackexchange_site: str = "stackoverflow"
+    stackexchange_max_queries: int = 4
+    stackexchange_max_search_requests: int = 4
     external_timeout: float = 10.0
     external_cache_ttl: int = 3600
     max_recommendation_raw_entries: int = 50
@@ -82,6 +84,8 @@ class Settings:
             stackexchange_enabled=_bool_env("STACKEXCHANGE_ENABLED", False),
             stackexchange_key=os.getenv("STACKEXCHANGE_KEY") or None,
             stackexchange_site=os.getenv("STACKEXCHANGE_SITE", "stackoverflow"),
+            stackexchange_max_queries=_int_env("STACKEXCHANGE_MAX_QUERIES", 4),
+            stackexchange_max_search_requests=_int_env("STACKEXCHANGE_MAX_SEARCH_REQUESTS", 4),
             external_timeout=float(os.getenv("EXTERNAL_CONTEXT_TIMEOUT", "10")),
             external_cache_ttl=_int_env("EXTERNAL_CONTEXT_CACHE_TTL", 3600),
             max_recommendation_raw_entries=_int_env("CAJAS_MAX_RECOMMENDATION_RAW_ENTRIES", 50),
