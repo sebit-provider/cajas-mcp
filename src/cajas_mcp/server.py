@@ -73,6 +73,7 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             "resource": settings.auth_resource_url,
             "authorization_servers": [settings.auth_issuer_url],
             "scopes_supported": list(settings.oauth_scopes_supported),
+            "bearer_methods_supported": ["header"],
             "resource_name": "CAJAS MCP",
             "resource_documentation": settings.public_url,
         }

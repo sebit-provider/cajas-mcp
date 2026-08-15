@@ -43,6 +43,7 @@ class AppAuthTests(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["resource"], "https://sebit-mcp.com/mcp")
             self.assertEqual(payload["authorization_servers"], ["https://auth.cajas.example.test"])
+            self.assertEqual(payload["bearer_methods_supported"], ["header"])
             self.assertEqual(
                 payload["scopes_supported"],
                 ["cajas:read", "cajas:raw:write", "cajas:coa:write", "cajas:criterion:read"],

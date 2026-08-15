@@ -61,6 +61,7 @@ if settings.auth_enabled:
         "resource": settings.auth_resource_url,
         "authorization_servers": [settings.auth_issuer_url],
         "scopes_supported": list(settings.oauth_scopes_supported),
+        "bearer_methods_supported": ["header"],
         "resource_name": "CAJAS MCP",
         "resource_documentation": settings.public_url,
     }
