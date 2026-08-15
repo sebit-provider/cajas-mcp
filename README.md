@@ -51,6 +51,8 @@ MCP Client
   - deterministic weighted signals;
   - pairwise threshold grouping;
   - organization-local historical Assembly pattern support;
+  - governance-aware historical support quality;
+  - existing human Assembly comparison for already assembled RAW;
   - optional Stack Exchange external context;
   - non-binding output with `mutation=false`.
 
@@ -59,12 +61,17 @@ MCP Client
 CAJAS MCP can analyze RAW accounting entries and suggest explainable Assembly candidates using:
 
 - RAW structural similarity;
-- organization-specific historical Assembly patterns;
+- organization-specific historical Assembly patterns weighted by governance quality;
 - optional external operational context.
 
 Recommendations are non-binding. They do not determine accounting treatment and never finalize accounting judgment.
 
 Historical patterns are supporting observations, not accounting rules or mandatory grouping rules.
+
+When input RAW entries already belong to an Assembly, `cajas.recommend_assembly` may return an
+`existing_judgment_comparison` with `AGREEMENT`, `SUGGESTED_SPLIT`, `SUGGESTED_MERGE`, or
+`PARTIAL_OVERLAP`. Differences between an existing human Assembly and an MCP recommendation are review
+signals only. CAJAS MCP does not split, merge, void, or modify existing Assembly/Event records.
 
 ## RAW File Import
 

@@ -40,6 +40,7 @@ class RawEntry(BaseModel):
     credit_account_code: str | None = None
     account_codes: list[str] = Field(default_factory=list)
     status: str | None = None
+    assembled_event_id: str | None = None
     lines: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

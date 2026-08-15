@@ -42,6 +42,8 @@ def raw(
     source: str = "erp",
     debit_account_code: str = "5300",
     credit_account_code: str = "2100",
+    status: str = "draft",
+    assembled_event_id: str | None = None,
 ) -> dict:
     return {
         "id": raw_id,
@@ -55,6 +57,8 @@ def raw(
         "source": source,
         "debit_account_code": debit_account_code,
         "credit_account_code": credit_account_code,
+        "status": status,
+        "assembled_event_id": assembled_event_id,
     }
 
 
@@ -125,6 +129,7 @@ class AssemblyEngineTests(unittest.TestCase):
                     {**raw("h2", amount=120), "account_codes": ["5300", "2100"]},
                 ],
                 "has_valid_signature": True,
+                "event": {"state": "confirmed", "confirmed_at": "2026-08-02T00:00:00Z"},
             }
         ]
         result = asyncio.run(engine.recommend([raw("a"), raw("b", amount=120)], include_external_context=False, historical_groups=history, history_available=True))
@@ -220,6 +225,157 @@ class AssemblyEngineTests(unittest.TestCase):
         )
         self.assertGreaterEqual(provider.calls, 1)
         self.assertTrue(result["candidates"][0]["external_context_trigger"]["used"])
+
+    def test_existing_judgment_perfect_agreement(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", assembled_event_id="event-1", status="assembled"),
+                    raw("b", assembled_event_id="event-1", status="assembled", amount=120),
+                    raw(
+                        "c",
+                        project="Other",
+                        department="Ops",
+                        counterparty_id="cp-2",
+                        assembled_event_id="event-2",
+                        status="assembled",
+                        description="Office catering",
+                        source="manual",
+                        import_batch_id="batch_2",
+                        debit_account_code="6100",
+                        credit_account_code="1100",
+                    ),
+                    raw(
+                        "d",
+                        project="Other",
+                        department="Ops",
+                        counterparty_id="cp-2",
+                        assembled_event_id="event-2",
+                        status="assembled",
+                        amount=130,
+                        description="Office catering support",
+                        source="manual",
+                        import_batch_id="batch_2",
+                        debit_account_code="6100",
+                        credit_account_code="1100",
+                    ),
+                ],
+                include_external_context=False,
+            )
+        )
+        comparison = result["existing_judgment_comparison"]
+        self.assertTrue(comparison["available"])
+        self.assertEqual(comparison["classification"], "AGREEMENT")
+        self.assertEqual(comparison["agreement_score"], 1.0)
+        self.assertFalse(comparison["review_signal"]["recommended"])
+
+    def test_existing_judgment_suggested_split(self) -> None:
+        engine = AssemblyRecommendationEngine(cluster_threshold=0.55)
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", assembled_event_id="event-1", status="assembled"),
+                    raw("b", assembled_event_id="event-1", status="assembled", description="AWS NAT Gateway monthly charge"),
+                    raw("c", assembled_event_id="event-1", status="assembled", project="Other", department="HR", counterparty_id="cp-9", description="Office catering"),
+                    raw("d", assembled_event_id="event-1", status="assembled", project="Legal", department="Legal", counterparty_id="cp-8", description="Legal advisory"),
+                ],
+                include_external_context=False,
+            )
+        )
+        comparison = result["existing_judgment_comparison"]
+        self.assertEqual(comparison["classification"], "SUGGESTED_SPLIT")
+        self.assertTrue(comparison["disagreement"])
+        self.assertTrue(any(w["code"] == "EXISTING_ASSEMBLY_REVIEW_SIGNAL" for w in result["warnings"]))
+
+    def test_existing_judgment_suggested_merge(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", assembled_event_id="event-1", status="assembled"),
+                    raw("b", assembled_event_id="event-1", status="assembled", amount=120),
+                    raw("c", assembled_event_id="event-2", status="assembled", amount=130),
+                    raw("d", assembled_event_id="event-2", status="assembled", amount=140),
+                ],
+                include_external_context=False,
+            )
+        )
+        self.assertEqual(result["existing_judgment_comparison"]["classification"], "SUGGESTED_MERGE")
+
+    def test_existing_judgment_partial_overlap(self) -> None:
+        engine = AssemblyRecommendationEngine(cluster_threshold=0.55)
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", assembled_event_id="event-1", status="assembled", project="P", counterparty_id="cp-1"),
+                    raw("b", assembled_event_id="event-1", status="assembled", project="P", counterparty_id="cp-1", amount=120),
+                    raw("c", assembled_event_id="event-1", status="assembled", project="Q", counterparty_id="cp-2", description="Training"),
+                    raw("d", assembled_event_id="event-2", status="assembled", project="Q", counterparty_id="cp-2", description="Training support"),
+                ],
+                include_external_context=False,
+            )
+        )
+        self.assertEqual(result["existing_judgment_comparison"]["classification"], "PARTIAL_OVERLAP")
+
+    def test_governance_quality_strengthens_confirmed_history(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        confirmed = [
+            {
+                "group_id": "confirmed",
+                "status": "assembled",
+                "raw_entries": [raw("h1"), raw("h2")],
+                "has_valid_signature": True,
+                "event": {"state": "confirmed", "confirmed_at": "2026-08-02T00:00:00Z"},
+            }
+        ]
+        oriented = [
+            {
+                "group_id": "oriented",
+                "status": "assembled",
+                "raw_entries": [raw("h1"), raw("h2")],
+                "event": {"state": "oriented", "confirmed_at": None},
+            }
+        ]
+        confirmed_result = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=confirmed, history_available=True))
+        oriented_result = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=oriented, history_available=True))
+        self.assertGreater(
+            confirmed_result["candidates"][0]["historical_pattern"]["governance_quality"],
+            oriented_result["candidates"][0]["historical_pattern"]["governance_quality"],
+        )
+        self.assertGreater(
+            confirmed_result["candidates"][0]["score_components"]["historical"],
+            oriented_result["candidates"][0]["score_components"]["historical"],
+        )
+
+    def test_missing_project_department_is_unavailable_not_different(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", project="", department=""),
+                    raw("b", project="", department="", amount=120),
+                ],
+                include_external_context=False,
+            )
+        )
+        signals = {signal["type"]: signal for signal in result["candidates"][0]["signals"]}
+        self.assertFalse(signals["same_project"]["available"])
+        self.assertFalse(signals["same_department"]["available"])
+
+    def test_identity_field_difference_is_not_integrity_warning(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    {**raw("a"), "created_by_name": "user-label", "created_by_display": {"name": "Profile Name"}},
+                    {**raw("b"), "created_by_name": "different-label", "created_by_display": {"name": "Another Profile"}},
+                ],
+                include_external_context=False,
+            )
+        )
+        warning_text = " ".join(result["candidates"][0]["warnings"])
+        self.assertNotIn("created_by", warning_text.lower())
 
 
 if __name__ == "__main__":

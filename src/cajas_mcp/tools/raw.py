@@ -11,6 +11,9 @@ def register_raw_tools(mcp: FastMCP, settings: Settings) -> None:
         name="cajas.search_raw_entries",
         description=(
             "Searches CAJAS RAW entries with pagination and filters. "
+            "Supported status values are draft, queued, assembled, and voided. "
+            "project and department are returned only when stored by CAJAS; missing values are not inferred. "
+            "created_by_name is a stored actor label and may differ from created_by_display profile identity. "
             "This read-only tool does not modify RAW status, create an Assembly, or create an Event."
         ),
     )

@@ -75,7 +75,13 @@ class AssemblyRecommendationEngine:
                 external_trigger={"used": False, "reason": "SINGLE_RAW_ENTRY"},
             )
             candidate.warnings.append("Only one RAW entry was supplied; recommendation cannot compare related entries.")
-            return {"candidates": [candidate.model_dump()], "historical_pattern": historical}
+            comparison = self._existing_judgment_comparison(entries, [[entry.id] for entry in entries])
+            return {
+                "candidates": [candidate.model_dump()],
+                "historical_pattern": historical,
+                "existing_judgment_comparison": comparison,
+                "warnings": self._top_level_warnings(entries, comparison),
+            }
 
         pair_scores = self._pair_scores(entries)
         groups = self._cluster(entries, pair_scores)
@@ -92,6 +98,8 @@ class AssemblyRecommendationEngine:
             external, external_trigger = await self._maybe_external_context(group, internal_confidence, include_external_context)
             candidates.append(self._candidate_for_group(group, historical=historical, external=external, external_trigger=external_trigger))
         candidates.sort(key=lambda item: item.score, reverse=True)
+        recommended_groups = [candidate.raw_entry_ids for candidate in candidates]
+        comparison = self._existing_judgment_comparison(entries, recommended_groups)
         return {
             "candidates": [candidate.model_dump() for candidate in candidates],
             "historical_pattern": {
@@ -99,6 +107,8 @@ class AssemblyRecommendationEngine:
                 "groups_checked": len(historical_groups or []),
                 "reason": None if history_available else "NO_HISTORY",
             },
+            "existing_judgment_comparison": comparison,
+            "warnings": self._top_level_warnings(entries, comparison),
         }
 
     def _pair_scores(self, entries: list[RawEntry]) -> dict[tuple[str, str], float]:
@@ -288,31 +298,39 @@ class AssemblyRecommendationEngine:
         if not historical_groups:
             return {
                 "available": True,
+                "groups_checked": 0,
                 "matched_groups": 0,
                 "positive_matches": 0,
                 "strong_matches": 0,
                 "counterexamples": 0,
+                "governance_quality": 0.0,
+                "effective_support": 0.0,
                 "score": 0.0,
                 "examples": [],
             }
         comparisons = [self._compare_historical_group(entries, group) for group in historical_groups]
-        comparisons.sort(key=lambda item: item["similarity"], reverse=True)
+        comparisons.sort(key=lambda item: item["effective_support"], reverse=True)
         positives = [item for item in comparisons if item["similarity"] >= 0.55]
-        strong = [item for item in comparisons if item["similarity"] >= 0.72]
+        strong = [item for item in comparisons if item["effective_support"] >= 0.72]
         counterexamples = [item for item in comparisons if item.get("counterexample")]
         if positives:
-            base = sum(item["similarity"] for item in positives[:5]) / min(len(positives), 5)
+            base = sum(item["effective_support"] for item in positives[:5]) / min(len(positives), 5)
             frequency = min(1.0, math.log1p(len(positives)) / math.log1p(6))
             score = base * 0.75 + frequency * 0.25
         else:
             score = 0.0
         score = max(0.0, min(1.0, score - min(0.35, 0.06 * len(counterexamples))))
+        governance_values = [float(item.get("governance_quality") or 0.0) for item in positives[:5]]
+        governance_quality = sum(governance_values) / len(governance_values) if governance_values else 0.0
         summary: dict[str, Any] = {
             "available": True,
+            "groups_checked": len(historical_groups),
             "matched_groups": len(positives),
             "positive_matches": len(positives),
             "strong_matches": len(strong),
             "counterexamples": len(counterexamples),
+            "governance_quality": round(governance_quality, 4),
+            "effective_support": round(score, 4),
             "score": round(score, 4),
             "examples": positives[:5] or comparisons[:3],
         }
@@ -358,12 +376,18 @@ class AssemblyRecommendationEngine:
             + source * 0.07
             + event_hint * 0.07
         )
+        governance = _governance_quality(group)
+        structural_similarity = max(0.0, min(1.0, similarity))
+        effective_support = structural_similarity * governance["quality"]
         context_similarity = max(project, counterparty)
         counterexample = context_similarity >= 0.75 and similarity < 0.55
         return {
             "group_id": group.get("group_id"),
             "status": group.get("status"),
-            "similarity": round(max(0.0, min(1.0, similarity)), 4),
+            "similarity": round(structural_similarity, 4),
+            "governance_quality": round(governance["quality"], 4),
+            "effective_support": round(effective_support, 4),
+            "governance": governance,
             "matched_signals": matched,
             "raw_count": len(historical_entries),
             "has_valid_signature": bool(group.get("has_valid_signature")),
@@ -388,8 +412,17 @@ class AssemblyRecommendationEngine:
             }
         has_unknown_terms = self._has_unknown_operational_terms(query)
         low_confidence = preliminary_score < self.external_trigger_threshold
-        should_use = low_confidence or has_unknown_terms
+        should_use = has_unknown_terms and (low_confidence or include_external_context)
         if not should_use:
+            if low_confidence:
+                return ExternalContextSummary(
+                    available=True,
+                    used=False,
+                    warning="Internal confidence was low, but no sanitized operational terms suggested useful external context.",
+                ), {
+                    "used": False,
+                    "reason": "LOW_INTERNAL_CONFIDENCE_NO_EXTERNAL_AMBIGUITY",
+                }
             return ExternalContextSummary(available=True, used=False, warning="Internal confidence was sufficient; external context not used."), {
                 "used": False,
                 "reason": "INTERNAL_CONFIDENCE_SUFFICIENT",
@@ -438,13 +471,86 @@ class AssemblyRecommendationEngine:
     def _warnings(entries: list[RawEntry], external: ExternalContextSummary, historical: dict[str, Any]) -> list[str]:
         warnings: list[str] = []
         if any(str(entry.status or "").lower() == "assembled" for entry in entries):
-            warnings.append("One or more RAW entries are already assembled; recommendation remains non-binding.")
+            warnings.append("REANALYZING_EXISTING_ASSEMBLY: One or more RAW entries already belong to an Assembly. Recommendation will not modify existing judgment.")
         if historical.get("warning"):
             warnings.append(str(historical["warning"]))
         if external.warning:
             warnings.append(external.warning)
         if external.used:
             warnings.append("External community context is untrusted and is not accounting evidence.")
+        return warnings
+
+    @staticmethod
+    def _existing_judgment_comparison(entries: list[RawEntry], recommended_groups: list[list[str]]) -> dict[str, Any]:
+        assembled_entries = [entry for entry in entries if str(entry.assembled_event_id or "").strip()]
+        if not assembled_entries:
+            return {
+                "available": False,
+                "reason": "NO_EXISTING_ASSEMBLY",
+                "mutation": False,
+            }
+        existing_by_event: dict[str, list[str]] = {}
+        unassembled: list[str] = []
+        for entry in entries:
+            event_id = str(entry.assembled_event_id or "").strip()
+            if event_id:
+                existing_by_event.setdefault(event_id, []).append(entry.id)
+            else:
+                unassembled.append(entry.id)
+        existing_groups = list(existing_by_event.values()) + [[raw_id] for raw_id in unassembled]
+        score_details = _pairwise_partition_agreement(existing_groups, recommended_groups)
+        classification = _classify_partition_change(existing_groups, recommended_groups, score_details)
+        disagreement = classification != "AGREEMENT"
+        coverage = len(assembled_entries) / len(entries) if entries else 0.0
+        severity = "none"
+        if disagreement:
+            if score_details["agreement_score"] < 0.45 and coverage >= 0.8:
+                severity = "medium"
+            elif score_details["agreement_score"] < 0.75:
+                severity = "low"
+            else:
+                severity = "info"
+        return {
+            "available": True,
+            "classification": classification,
+            "agreement_score": score_details["agreement_score"],
+            "disagreement": disagreement,
+            "coverage": round(coverage, 4),
+            "existing_group_count": len(existing_groups),
+            "recommendation_group_count": len([group for group in recommended_groups if group]),
+            "existing_groups": [
+                {"reference_type": "assembled_event_id", "reference_id": event_id, "raw_entry_ids": raw_ids}
+                for event_id, raw_ids in existing_by_event.items()
+            ],
+            "recommended_groups": [{"raw_entry_ids": list(group)} for group in recommended_groups],
+            "pair_counts": score_details["pair_counts"],
+            "review_signal": {
+                "recommended": bool(disagreement and severity in {"low", "medium"}),
+                "severity": severity,
+                "reason": "EXISTING_ASSEMBLY_DIFFERS_FROM_RECOMMENDATION" if disagreement else "EXISTING_ASSEMBLY_MATCHES_RECOMMENDATION",
+                "meaning": "Human review may be useful. This is not an automatic correction and does not modify existing Assembly or Event records.",
+            },
+            "mutation": False,
+        }
+
+    @staticmethod
+    def _top_level_warnings(entries: list[RawEntry], comparison: dict[str, Any]) -> list[dict[str, Any]]:
+        warnings: list[dict[str, Any]] = []
+        if any(str(entry.status or "").lower() == "assembled" or str(entry.assembled_event_id or "").strip() for entry in entries):
+            warnings.append(
+                {
+                    "code": "REANALYZING_EXISTING_ASSEMBLY",
+                    "message": "One or more RAW entries already belong to an Assembly. Recommendation will not modify existing judgment.",
+                }
+            )
+        if comparison.get("available") and comparison.get("disagreement"):
+            warnings.append(
+                {
+                    "code": "EXISTING_ASSEMBLY_REVIEW_SIGNAL",
+                    "message": "Existing human Assembly and MCP recommendation differ. Treat this as a review signal, not an error finding.",
+                    "severity": (comparison.get("review_signal") or {}).get("severity"),
+                }
+            )
         return warnings
 
 
@@ -492,3 +598,100 @@ def _set_similarity(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
     return len(left & right) / len(left | right)
+
+
+def _governance_quality(group: dict[str, Any]) -> dict[str, Any]:
+    status = str(group.get("status") or "").strip().lower()
+    event = group.get("event") if isinstance(group.get("event"), dict) else {}
+    event_state = str((event or {}).get("state") or "").strip().lower()
+    has_signature = bool(group.get("has_valid_signature"))
+    confirmed = bool((event or {}).get("confirmed_at")) or event_state in {"confirmed", "final", "finalized"}
+    finalized = status == "finalized" or event_state in {"final", "finalized"}
+    if status == "voided" or event_state == "voided":
+        quality = 0.0
+        label = "VOIDED"
+    elif finalized and has_signature:
+        quality = 1.0
+        label = "FINALIZED_WITH_SIGNATURE"
+    elif finalized:
+        quality = 0.92
+        label = "FINALIZED"
+    elif confirmed and has_signature:
+        quality = 0.88
+        label = "CONFIRMED_WITH_SIGNATURE"
+    elif confirmed:
+        quality = 0.78
+        label = "CONFIRMED"
+    elif has_signature:
+        quality = 0.68
+        label = "SIGNED_UNCONFIRMED"
+    elif status == "assembled":
+        quality = 0.52
+        label = "ASSEMBLED_UNCONFIRMED"
+    elif event_state in {"oriented", "draft"}:
+        quality = 0.35
+        label = "ORIENTED_OR_DRAFT"
+    else:
+        quality = 0.45
+        label = "LIMITED_GOVERNANCE_METADATA"
+    return {
+        "quality": quality,
+        "label": label,
+        "assembly_status": status or None,
+        "has_valid_signature": has_signature,
+        "event_state": event_state or None,
+        "event_confirmed": confirmed,
+        "confirmed_at": (event or {}).get("confirmed_at"),
+    }
+
+
+def _pairwise_partition_agreement(existing_groups: list[list[str]], recommended_groups: list[list[str]]) -> dict[str, Any]:
+    ids = sorted({raw_id for group in [*existing_groups, *recommended_groups] for raw_id in group})
+    if len(ids) < 2:
+        return {"agreement_score": 1.0, "pair_counts": {"total": 0, "agree": 0, "same_in_both": 0, "split_in_both": 0, "same_existing_split_recommended": 0, "split_existing_same_recommended": 0}}
+    existing_index = _partition_index(existing_groups)
+    recommended_index = _partition_index(recommended_groups)
+    counts = {
+        "total": 0,
+        "agree": 0,
+        "same_in_both": 0,
+        "split_in_both": 0,
+        "same_existing_split_recommended": 0,
+        "split_existing_same_recommended": 0,
+    }
+    for left, right in itertools.combinations(ids, 2):
+        same_existing = existing_index.get(left) == existing_index.get(right)
+        same_recommended = recommended_index.get(left) == recommended_index.get(right)
+        counts["total"] += 1
+        if same_existing == same_recommended:
+            counts["agree"] += 1
+            counts["same_in_both" if same_existing else "split_in_both"] += 1
+        elif same_existing:
+            counts["same_existing_split_recommended"] += 1
+        else:
+            counts["split_existing_same_recommended"] += 1
+    score = counts["agree"] / counts["total"] if counts["total"] else 1.0
+    return {"agreement_score": round(score, 4), "pair_counts": counts}
+
+
+def _classify_partition_change(existing_groups: list[list[str]], recommended_groups: list[list[str]], score_details: dict[str, Any]) -> str:
+    counts = score_details.get("pair_counts") or {}
+    if score_details.get("agreement_score") == 1.0:
+        return "AGREEMENT"
+    split_pairs = int(counts.get("same_existing_split_recommended") or 0)
+    merge_pairs = int(counts.get("split_existing_same_recommended") or 0)
+    if split_pairs and not merge_pairs:
+        return "SUGGESTED_SPLIT"
+    if merge_pairs and not split_pairs:
+        return "SUGGESTED_MERGE"
+    if split_pairs or merge_pairs:
+        return "PARTIAL_OVERLAP"
+    return "INSUFFICIENT_EVIDENCE"
+
+
+def _partition_index(groups: list[list[str]]) -> dict[str, str]:
+    index: dict[str, str] = {}
+    for i, group in enumerate(groups):
+        for raw_id in group:
+            index[str(raw_id)] = f"g{i}"
+    return index

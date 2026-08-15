@@ -17,6 +17,8 @@ def capabilities_payload(*, external_context_enabled: bool = False, auth_enabled
             "event_read": True,
             "assembly_recommendation": True,
             "historical_assembly_context": True,
+            "governance_aware_history": True,
+            "existing_assembly_comparison": True,
             "external_context_adapter": True,
             "external_context_search": external_context_enabled,
             "raw_file_inspection": True,
