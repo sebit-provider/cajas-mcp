@@ -53,7 +53,7 @@ MCP Client
   - organization-local historical Assembly pattern support;
   - governance-aware historical support quality;
   - existing human Assembly comparison for already assembled RAW;
-  - optional Stack Exchange external context;
+  - optional user-requested Stack Exchange community validation;
   - non-binding output with `mutation=false`.
 
 ## Assembly Recommendation Boundary
@@ -72,6 +72,35 @@ When input RAW entries already belong to an Assembly, `cajas.recommend_assembly`
 `existing_judgment_comparison` with `AGREEMENT`, `SUGGESTED_SPLIT`, `SUGGESTED_MERGE`, or
 `PARTIAL_OVERLAP`. Differences between an existing human Assembly and an MCP recommendation are review
 signals only. CAJAS MCP does not split, merge, void, or modify existing Assembly/Event records.
+
+### Community Validation
+
+`cajas.recommend_assembly` can optionally validate an Assembly recommendation against public Stack Exchange discussions:
+
+```json
+{
+  "community_validation": {
+    "enabled": true,
+    "mode": "BALANCED"
+  }
+}
+```
+
+Supported modes are `SUPPORT`, `CHALLENGE`, and `BALANCED`. The default is `BALANCED` when validation is enabled.
+
+Community validation is opt-in only. Low internal confidence does not automatically call Stack Exchange. The validation result is returned as an independent `community_validation` block and does not change the internal recommendation score.
+
+Stack Exchange content is public operational context, not accounting authority. CAJAS MCP treats all community content as `UNTRUSTED_EXTERNAL_DATA`; it never uses community results to create standards, determine accounting treatment, approve, sign, finalize, split, merge, or mutate Assembly/Event records.
+
+The Stack Exchange API key is server-side only:
+
+```text
+STACKEXCHANGE_ENABLED=true
+STACKEXCHANGE_KEY=
+STACKEXCHANGE_SITE=stackoverflow
+```
+
+No Stack Exchange user login is required. Provider failures, rate limits, or disabled configuration degrade gracefully and do not fail the core Assembly recommendation.
 
 ## RAW File Import
 

@@ -13,7 +13,10 @@ class ExternalSearchResult:
     title: str
     url: str
     summary: str
+    question_id: int | None = None
     score: int | None = None
+    question_score: int | None = None
+    answer_score: int | None = None
     tags: list[str] | None = None
     accepted_answer: bool | None = None
     retrieved_at: str | None = None
@@ -34,4 +37,3 @@ class DisabledExternalContextProvider:
 
     async def extract_work_patterns(self, results: list[ExternalSearchResult]) -> list[str]:
         return []
-

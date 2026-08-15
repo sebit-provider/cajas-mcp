@@ -69,6 +69,18 @@ EXPOSED_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+COMMUNITY_VALIDATION_POLICY: dict[str, bool | str] = {
+    "trust": "UNTRUSTED_EXTERNAL_DATA",
+    "opt_in_required": True,
+    "can_authorize_mutation": False,
+    "can_request_secrets": False,
+    "can_bypass_cajas_permissions": False,
+    "can_create_standards": False,
+    "can_approve_accounting_judgments": False,
+    "can_modify_assembly": False,
+    "can_modify_events": False,
+}
+
 
 def is_action_allowed(action: McpAction | str) -> bool:
     parsed = McpAction(action)

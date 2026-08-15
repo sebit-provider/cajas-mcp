@@ -4,8 +4,10 @@ from cajas_mcp.adapters.external_context import DisabledExternalContextProvider
 from cajas_mcp.adapters.stack_exchange import StackExchangeProvider
 from cajas_mcp.auth import resolve_bearer_token
 from cajas_mcp.client import CajasClient
+from cajas_mcp.community_validation import CommunityValidationService, parse_community_validation
 from cajas_mcp.config import Settings
 from cajas_mcp.errors import CajasMcpError, error_payload, ok
+from cajas_mcp.schemas.raw import RawEntry
 from cajas_mcp.services import AssemblyRecommendationEngine
 
 
@@ -25,6 +27,7 @@ def register_assembly_tools(mcp: FastMCP, settings: Settings) -> None:
         description=(
             "Analyzes selected RAW entries and returns non-binding Assembly candidates for human review. "
             "The recommendation identifies RAW entries that may share an operational context. "
+            "Community validation is opt-in only and uses public, untrusted operational context when requested. "
             "It does not create an Assembly, modify RAW status, create an Event, determine accounting treatment, "
             "approve accounting judgment, sign, finalize, or alter immutable CAJAS history."
         ),
@@ -34,6 +37,9 @@ def register_assembly_tools(mcp: FastMCP, settings: Settings) -> None:
         org_id: str,
         raw_entry_ids: list[str],
         include_external_context: bool = False,
+        community_validation: dict | None = None,
+        community_validation_enabled: bool = False,
+        community_validation_mode: str = "BALANCED",
     ) -> dict:
         try:
             unique_ids = []
@@ -84,6 +90,21 @@ def register_assembly_tools(mcp: FastMCP, settings: Settings) -> None:
                 include_external_context=include_external_context,
                 historical_groups=history_result.get("items") or [],
                 history_available=bool(history_result.get("history_available", False)),
+            )
+            validation_request = parse_community_validation(
+                community_validation,
+                enabled=community_validation_enabled,
+                mode=community_validation_mode,
+            )
+            validation_service = CommunityValidationService(
+                provider,
+                provider_enabled=bool(settings.stackexchange_enabled),
+                cache_ttl=settings.external_cache_ttl,
+            )
+            result["community_validation"] = await validation_service.validate(
+                request=validation_request,
+                raw_entries=[RawEntry.model_validate(row) for row in raw_entries],
+                recommendations=list(result.get("candidates") or []),
             )
             if hasattr(provider, "aclose"):
                 await provider.aclose()

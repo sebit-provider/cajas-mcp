@@ -5,7 +5,14 @@ import unittest
 
 from cajas_mcp.config import Settings
 from cajas_mcp.resources.capabilities import capabilities_payload
-from cajas_mcp.security.policy import EXPOSED_TOOL_NAMES, FORBIDDEN_MCP_ACTIONS, McpAction, assert_no_forbidden_tools, is_action_allowed
+from cajas_mcp.security.policy import (
+    COMMUNITY_VALIDATION_POLICY,
+    EXPOSED_TOOL_NAMES,
+    FORBIDDEN_MCP_ACTIONS,
+    McpAction,
+    assert_no_forbidden_tools,
+    is_action_allowed,
+)
 from cajas_mcp.server import create_mcp_server
 
 
@@ -16,6 +23,9 @@ class CapabilityAndPolicyTests(unittest.TestCase):
         self.assertTrue(payload["capabilities"]["event_read"])
         self.assertTrue(payload["capabilities"]["assembly_recommendation"])
         self.assertTrue(payload["capabilities"]["historical_assembly_context"])
+        self.assertTrue(payload["capabilities"]["community_validation"])
+        self.assertTrue(payload["capabilities"]["community_validation_opt_in_required"])
+        self.assertFalse(payload["capabilities"]["community_validation_provider_stackexchange"])
         self.assertTrue(payload["capabilities"]["external_context_adapter"])
         self.assertFalse(payload["capabilities"]["external_context_search"])
         self.assertTrue(payload["capabilities"]["raw_file_inspection"])
@@ -46,6 +56,17 @@ class CapabilityAndPolicyTests(unittest.TestCase):
 
     def test_exposed_tools_do_not_include_forbidden_mutations(self) -> None:
         assert_no_forbidden_tools(EXPOSED_TOOL_NAMES)
+
+    def test_community_validation_external_content_cannot_authorize_mutations(self) -> None:
+        self.assertEqual(COMMUNITY_VALIDATION_POLICY["trust"], "UNTRUSTED_EXTERNAL_DATA")
+        self.assertTrue(COMMUNITY_VALIDATION_POLICY["opt_in_required"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_authorize_mutation"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_request_secrets"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_bypass_cajas_permissions"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_create_standards"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_approve_accounting_judgments"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_modify_assembly"])
+        self.assertFalse(COMMUNITY_VALIDATION_POLICY["can_modify_events"])
 
     def test_mcp_tool_registration(self) -> None:
         async def run() -> set[str]:
