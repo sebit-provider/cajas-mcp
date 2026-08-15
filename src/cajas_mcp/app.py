@@ -17,6 +17,10 @@ settings = Settings.from_env()
 mcp = create_mcp_server(settings)
 
 
+async def root(_: Any) -> JSONResponse:
+    return JSONResponse({"ok": True, "service": "cajas-mcp", "health": "/health", "mcp": settings.mcp_path})
+
+
 async def health(_: Any) -> JSONResponse:
     return JSONResponse({"ok": True, "service": "cajas-mcp", "version": __version__})
 
@@ -46,7 +50,9 @@ async def lifespan(_: Starlette):
 
 app = Starlette(
     routes=[
+        Route("/", root, methods=["GET"]),
         Route("/health", health, methods=["GET"]),
+        Route("/api/health", health, methods=["GET"]),
         Route("/ready", ready, methods=["GET"]),
         Route("/version", version, methods=["GET"]),
         Mount("/", app=mcp.streamable_http_app()),
@@ -61,4 +67,3 @@ app = CORSMiddleware(
     allow_headers=["Authorization", "Content-Type", "MCP-Protocol-Version", "Mcp-Session-Id"],
     expose_headers=["Mcp-Session-Id"],
 )
-
