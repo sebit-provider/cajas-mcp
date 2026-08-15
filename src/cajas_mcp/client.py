@@ -167,6 +167,102 @@ class CajasClient:
         payload = await self._request("GET", f"/api/events/{event_id}", token=token, org_id=org_id)
         return {"event": payload.get("event") or payload, "_request_id": payload.get("_request_id")}
 
+    async def list_assembly_history(self, *, token: str, org_id: str, filters: dict[str, Any]) -> dict[str, Any]:
+        params = {
+            "project": filters.get("project"),
+            "department": filters.get("department"),
+            "counterparty_id": filters.get("counterparty_id"),
+            "date_from": filters.get("date_from"),
+            "date_to": filters.get("date_to"),
+            "account_code": filters.get("account_code"),
+            "raw_entry_id": filters.get("raw_entry_id"),
+            "limit": min(max(int(filters.get("limit") or 100), 1), 100),
+            "cursor": filters.get("cursor"),
+        }
+        params = {key: value for key, value in params.items() if value not in (None, "")}
+        payload = await self._request("GET", "/api/assembly/history", token=token, org_id=org_id, params=params)
+        return {
+            "items": payload.get("items") or [],
+            "next_cursor": payload.get("next_cursor"),
+            "history_available": bool(payload.get("history_available", True)),
+            "_request_id": payload.get("_request_id"),
+        }
+
+    async def preview_raw_import(self, *, token: str, org_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/smart-excel/preview",
+            token=token,
+            org_id=org_id,
+            json=payload,
+            retry_read=False,
+        )
+
+    async def execute_raw_import(self, *, token: str, org_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/api/smart-excel/execute",
+            token=token,
+            org_id=org_id,
+            json=payload,
+            retry_read=False,
+        )
+
+    async def preview_coa_import(self, *, token: str, org_id: str, profile_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/coa/profiles/{profile_id}/upload-preview",
+            token=token,
+            org_id=org_id,
+            json=payload,
+            retry_read=False,
+        )
+
+    async def execute_coa_import(self, *, token: str, org_id: str, profile_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/api/coa/profiles/{profile_id}/upload",
+            token=token,
+            org_id=org_id,
+            json=payload,
+            retry_read=False,
+        )
+
+    async def list_standards(self, *, token: str, org_id: str, filters: dict[str, Any]) -> dict[str, Any]:
+        params = {
+            "standard_type": filters.get("standard_type"),
+            "active_only": filters.get("active_only", True),
+            "q": filters.get("query") or filters.get("code"),
+        }
+        params = {key: value for key, value in params.items() if value not in (None, "")}
+        payload = await self._request("GET", "/api/standards", token=token, org_id=org_id, params=params)
+        items = payload.get("items") or []
+        level = str(filters.get("level") or "").strip().upper()
+        code = str(filters.get("code") or "").strip().upper()
+        if level:
+            items = [item for item in items if str(item.get("level") or "").strip().upper() == level]
+        if code:
+            items = [item for item in items if code in str(item.get("code") or "").strip().upper()]
+        return {"items": items, "_request_id": payload.get("_request_id")}
+
+    async def get_standard(self, *, token: str, org_id: str, standard_id: str) -> dict[str, Any]:
+        payload = await self._request("GET", f"/api/standards/{standard_id}", token=token, org_id=org_id)
+        return {"item": payload.get("item") or payload, "_request_id": payload.get("_request_id")}
+
+    async def find_interpretations(self, *, token: str, org_id: str, group_id: str, query: str | None = None, limit: int = 20) -> dict[str, Any]:
+        params = {"group_id": group_id, "q": query, "limit": max(1, min(int(limit or 20), 100))}
+        params = {key: value for key, value in params.items() if value not in (None, "")}
+        payload = await self._request("GET", "/api/standards/interpretations", token=token, org_id=org_id, params=params)
+        return {"items": payload.get("items") or [], "_request_id": payload.get("_request_id")}
+
+    async def get_event_standard_links(self, *, token: str, org_id: str, event_id: str) -> dict[str, Any]:
+        payload = await self._request("GET", f"/api/events/{event_id}/standards-links", token=token, org_id=org_id)
+        return {"items": payload.get("items") or [], "_request_id": payload.get("_request_id")}
+
+    async def get_event_interpretation_statements(self, *, token: str, org_id: str, event_id: str) -> dict[str, Any]:
+        payload = await self._request("GET", f"/api/events/{event_id}/interpretation-statements", token=token, org_id=org_id)
+        return {"items": payload.get("items") or [], "_request_id": payload.get("_request_id")}
+
     @staticmethod
     def _cursor_to_offset(cursor: Any) -> int:
         if cursor in (None, ""):
@@ -200,4 +296,3 @@ class CajasClient:
                     continue
             result.append(row)
         return result
-

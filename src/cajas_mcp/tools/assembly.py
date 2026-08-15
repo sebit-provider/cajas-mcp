@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from mcp.server.fastmcp import Context, FastMCP
 
 from cajas_mcp.adapters.external_context import DisabledExternalContextProvider
@@ -63,12 +61,30 @@ def register_assembly_tools(mcp: FastMCP, settings: Settings) -> None:
                     result = await client.get_raw_entry(token=token, org_id=org_id, raw_entry_id=raw_id)
                     request_id = request_id or result.get("_request_id")
                     raw_entries.append(result["raw_entry"])
+                try:
+                    history_result = await client.list_assembly_history(
+                        token=token,
+                        org_id=org_id,
+                        filters=_history_filters_from_raw_entries(raw_entries),
+                    )
+                    request_id = request_id or history_result.get("_request_id")
+                except CajasMcpError as history_error:
+                    history_result = {
+                        "items": [],
+                        "history_available": False,
+                        "history_warning": history_error.code,
+                    }
             finally:
                 await client.aclose()
 
             provider = _external_provider(settings)
             engine = AssemblyRecommendationEngine(external_provider=provider)
-            result = await engine.recommend(raw_entries, include_external_context=include_external_context)
+            result = await engine.recommend(
+                raw_entries,
+                include_external_context=include_external_context,
+                historical_groups=history_result.get("items") or [],
+                history_available=bool(history_result.get("history_available", False)),
+            )
             if hasattr(provider, "aclose"):
                 await provider.aclose()
             return ok(
@@ -76,9 +92,42 @@ def register_assembly_tools(mcp: FastMCP, settings: Settings) -> None:
                 explanation="Returned non-binding Assembly recommendations. No CAJAS state was modified.",
                 warnings=[
                     "Assembly recommendations are suggestions for review and do not determine accounting treatment.",
+                    *(
+                        [f"Historical assembly context unavailable: {history_result.get('history_warning')}"]
+                        if history_result.get("history_warning")
+                        else []
+                    ),
                 ],
                 request_id=request_id,
             )
         except CajasMcpError as exc:
             return error_payload(exc)
 
+
+def _history_filters_from_raw_entries(raw_entries: list[dict]) -> dict:
+    filters: dict = {"limit": 100}
+    if not raw_entries:
+        return filters
+
+    def common_value(*keys: str) -> str | None:
+        values = set()
+        for row in raw_entries:
+            value = ""
+            for key in keys:
+                value = str(row.get(key) or "").strip()
+                if value:
+                    break
+            if value:
+                values.add(value)
+        return next(iter(values)) if len(values) == 1 else None
+
+    project = common_value("project")
+    department = common_value("department")
+    counterparty_id = common_value("counterparty_id", "counterpart_id")
+    if project:
+        filters["project"] = project
+    if department:
+        filters["department"] = department
+    if counterparty_id:
+        filters["counterparty_id"] = counterparty_id
+    return filters

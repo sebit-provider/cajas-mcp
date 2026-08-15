@@ -26,9 +26,12 @@ class AssemblyCandidate(BaseModel):
     candidate_id: str
     raw_entry_ids: list[str]
     score: float = Field(ge=0.0, le=1.0)
+    score_components: dict[str, float] = Field(default_factory=dict)
     signals: list[Signal]
+    historical_pattern: dict[str, Any] = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    external_context_trigger: dict[str, Any] = Field(default_factory=dict)
     external_context_used: bool = False
     mutation: bool = False
 
@@ -48,4 +51,3 @@ class RecommendAssemblyInput(BaseModel):
                 seen.add(clean)
                 result.append(clean)
         return result
-

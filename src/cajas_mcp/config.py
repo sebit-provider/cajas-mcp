@@ -37,6 +37,12 @@ class Settings:
     external_timeout: float = 10.0
     external_cache_ttl: int = 3600
     max_recommendation_raw_entries: int = 50
+    max_file_bytes: int = 5 * 1024 * 1024
+    max_workbook_sheets: int = 10
+    max_rows: int = 5000
+    max_columns: int = 100
+    max_cell_length: int = 5000
+    import_session_ttl: int = 1800
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,6 +61,12 @@ class Settings:
             external_timeout=float(os.getenv("EXTERNAL_CONTEXT_TIMEOUT", "10")),
             external_cache_ttl=_int_env("EXTERNAL_CONTEXT_CACHE_TTL", 3600),
             max_recommendation_raw_entries=_int_env("CAJAS_MAX_RECOMMENDATION_RAW_ENTRIES", 50),
+            max_file_bytes=_int_env("CAJAS_MAX_FILE_BYTES", 5 * 1024 * 1024),
+            max_workbook_sheets=_int_env("CAJAS_MAX_WORKBOOK_SHEETS", 10),
+            max_rows=_int_env("CAJAS_MAX_IMPORT_ROWS", 5000),
+            max_columns=_int_env("CAJAS_MAX_IMPORT_COLUMNS", 100),
+            max_cell_length=_int_env("CAJAS_MAX_CELL_LENGTH", 5000),
+            import_session_ttl=_int_env("CAJAS_IMPORT_SESSION_TTL", 1800),
         )
 
     def validate_ready(self) -> list[str]:
@@ -62,4 +74,3 @@ class Settings:
         if not self.cajas_api_base_url:
             missing.append("CAJAS_API_BASE_URL")
         return missing
-

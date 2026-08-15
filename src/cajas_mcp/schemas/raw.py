@@ -38,6 +38,7 @@ class RawEntry(BaseModel):
     amount: float | None = None
     debit_account_code: str | None = None
     credit_account_code: str | None = None
+    account_codes: list[str] = Field(default_factory=list)
     status: str | None = None
     lines: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -51,4 +52,3 @@ class RawEntry(BaseModel):
             if not data.get("total_amount") and data.get("amount") is not None:
                 data = {**data, "total_amount": data.get("amount")}
         return data
-

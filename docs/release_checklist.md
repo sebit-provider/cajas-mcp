@@ -146,6 +146,8 @@ Railway production deploy should use Railway GitHub integration and Railway envi
 - Stack Exchange provider through external context abstraction.
 - untrusted content sanitizer.
 
+Status: partially implemented. Historical Assembly context is organization-local and read-only through CAJAS API. Stack Exchange remains optional.
+
 ### Phase 5: Criterion Reference/Interpretation Proposal
 
 - standard reference resolver.
@@ -178,4 +180,3 @@ Railway production deploy should use Railway GitHub integration and Railway envi
 5. Whether external context search result summaries are persisted in CAJAS audit/recommendation history, or kept ephemeral with only source URLs logged.
 6. Official vulnerability reporting contact for `SECURITY.md`.
 7. License final choice: recommended Apache-2.0, but owner approval required.
-

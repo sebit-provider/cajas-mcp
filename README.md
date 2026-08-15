@@ -31,26 +31,81 @@ MCP Client
   - `cajas.search_raw_entries`
   - `cajas.search_events`
   - `cajas.get_event`
+- RAW file import pipeline:
+  - `cajas.inspect_raw_file`
+  - `cajas.preview_raw_import`
+  - `cajas.import_raw_file`
+- CoA profile import pipeline:
+  - `cajas.inspect_coa_file`
+  - `cajas.preview_coa_import`
+  - `cajas.import_coa`
+- Criterion and Interpretation workflow:
+  - `cajas.find_criterion_group`
+  - `cajas.resolve_standard_reference`
+  - `cajas.propose_criterion_group`
+  - `cajas.find_interpretations`
+  - `cajas.propose_interpretation`
 - Resource:
   - `cajas://capabilities`
 - Assembly Recommendation PoC:
   - deterministic weighted signals;
   - pairwise threshold grouping;
+  - organization-local historical Assembly pattern support;
   - optional Stack Exchange external context;
   - non-binding output with `mutation=false`.
 
 ## Assembly Recommendation Boundary
 
-CAJAS MCP can analyze RAW accounting entries and suggest explainable Assembly candidates using transaction structure and optional external operational context.
+CAJAS MCP can analyze RAW accounting entries and suggest explainable Assembly candidates using:
+
+- RAW structural similarity;
+- organization-specific historical Assembly patterns;
+- optional external operational context.
 
 Recommendations are non-binding. They do not determine accounting treatment and never finalize accounting judgment.
 
+Historical patterns are supporting observations, not accounting rules or mandatory grouping rules.
+
+## RAW File Import
+
+CAJAS MCP supports a composable RAW import flow for synthetic or user-provided CSV/XLSX accounting data:
+
+1. Inspect a CSV/XLSX file with `cajas.inspect_raw_file`.
+2. Review sheet structure, warnings, and inferred Smart Excel column mapping.
+3. Preview the import with `cajas.preview_raw_import` against a selected `profile_id`.
+4. Resolve unresolved CoA or mapping errors in the preview result.
+5. Import only a successful preview with `cajas.import_raw_file`.
+6. Use the returned RAW IDs with `cajas.recommend_assembly`.
+
+`inspect` and `preview` are non-mutating. `import` creates RAW entries/groups through the authenticated CAJAS Smart Excel API, but it does not create Events, approve, sign, finalize, or alter immutable history.
+
+Supported file types are `.csv` and `.xlsx`. Macro-enabled workbooks, legacy `.xls`, PDFs, ZIP files, and unknown binaries are rejected. Formulas are never executed.
+
+When RAW preview reports unresolved CoA accounts, CAJAS MCP keeps account creation separate:
+
+1. Inspect a CoA CSV/XLSX file with `cajas.inspect_coa_file`.
+2. Preview it against a specific `profile_id` with `cajas.preview_coa_import`.
+3. Review `ADD`, `UPDATE_METADATA`, `CONFLICT`, `BLOCKED`, and `DEACTIVATE_CANDIDATE` operations.
+4. Apply only explicit accepted operation IDs with `cajas.import_coa`.
+5. Rerun `cajas.preview_raw_import` for the RAW file.
+
+CoA import is profile-scoped and merge-oriented. It does not replace the whole CoA, infer account-code renames, deactivate accounts missing from the file, or auto-create accounts during RAW import.
+
+## Criterion and Interpretation Exploration
+
+CAJAS MCP supports a non-mutating standards workflow:
+
+1. Search existing CAJAS criterion groups with `cajas.find_criterion_group`.
+2. Resolve an external standard locator with `cajas.resolve_standard_reference` when no reusable group exists.
+3. Generate a CAJAS-authored criterion proposal with `cajas.propose_criterion_group`.
+4. Search reusable interpretations under that group with `cajas.find_interpretations`.
+5. Propose a new interpretation with `cajas.propose_interpretation` only when reuse is not appropriate.
+
+Reference resolution identifies locators such as `IFRS 15.22-30` or `IAS 36.9-14`. It does not return or store full IFRS/GAAP text, does not copy official headings into CAJAS titles, and does not create standards, templates, event links, approvals, or confirmations.
+
 ## Planned
 
-- RAW CSV/XLSX import.
-- CoA import preview/import.
-- Criterion reference resolver.
-- Interpretation proposal.
+- Human-approved Criterion/Interpretation creation and Event linkage.
 - OAuth protected-resource production auth.
 
 ## Non-Goals

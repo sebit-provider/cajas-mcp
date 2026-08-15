@@ -8,7 +8,11 @@ from cajas_mcp.services import AssemblyRecommendationEngine
 
 
 class FakeExternalProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def search(self, query: str, *, limit: int = 5) -> list[ExternalSearchResult]:
+        self.calls += 1
         return [
             ExternalSearchResult(
                 provider="fake",
@@ -36,6 +40,8 @@ def raw(
     amount: float = 100.0,
     import_batch_id: str = "batch_1",
     source: str = "erp",
+    debit_account_code: str = "5300",
+    credit_account_code: str = "2100",
 ) -> dict:
     return {
         "id": raw_id,
@@ -47,8 +53,8 @@ def raw(
         "total_amount": amount,
         "import_batch_id": import_batch_id,
         "source": source,
-        "debit_account_code": "5300",
-        "credit_account_code": "2100",
+        "debit_account_code": debit_account_code,
+        "credit_account_code": credit_account_code,
     }
 
 
@@ -108,7 +114,113 @@ class AssemblyEngineTests(unittest.TestCase):
         self.assertLessEqual(signals["external_context"]["score"], 0.6)
         self.assertLess(candidate["score"], 0.7)
 
+    def test_identical_past_pattern_increases_historical_score(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        history = [
+            {
+                "group_id": "group-1",
+                "status": "assembled",
+                "raw_entries": [
+                    {**raw("h1"), "account_codes": ["5300", "2100"]},
+                    {**raw("h2", amount=120), "account_codes": ["5300", "2100"]},
+                ],
+                "has_valid_signature": True,
+            }
+        ]
+        result = asyncio.run(engine.recommend([raw("a"), raw("b", amount=120)], include_external_context=False, historical_groups=history, history_available=True))
+        candidate = result["candidates"][0]
+        self.assertGreater(candidate["score_components"]["historical"], 0.7)
+        self.assertGreater(candidate["historical_pattern"]["positive_matches"], 0)
+        self.assertIn("historical", candidate["score_components"])
+
+    def test_repeated_positive_matches_increase_support(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        one_history = [{"group_id": "g1", "raw_entries": [raw("h1"), raw("h2")]}]
+        repeated_history = [{"group_id": f"g{i}", "raw_entries": [raw(f"h{i}a"), raw(f"h{i}b")]} for i in range(5)]
+        one = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=one_history, history_available=True))
+        repeated = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=repeated_history, history_available=True))
+        self.assertGreater(repeated["candidates"][0]["score_components"]["historical"], one["candidates"][0]["score_components"]["historical"])
+
+    def test_counterexamples_reduce_support(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        positive = [{"group_id": "g1", "raw_entries": [raw("h1"), raw("h2")]}]
+        with_counterexample = positive + [
+            {
+                "group_id": "g2",
+                "raw_entries": [
+                    raw(
+                        "x1",
+                        department="Legal",
+                        description="Unrelated legal advisory",
+                        source="manual",
+                        amount=900,
+                        debit_account_code="9999",
+                        credit_account_code="8888",
+                    ),
+                ],
+            }
+        ]
+        clean = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=positive, history_available=True))
+        penalized = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=with_counterexample, history_available=True))
+        self.assertGreater(clean["candidates"][0]["score_components"]["historical"], penalized["candidates"][0]["score_components"]["historical"])
+        self.assertGreater(penalized["candidates"][0]["historical_pattern"]["counterexamples"], 0)
+
+    def test_history_exists_but_no_match_returns_low_historical_score(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        history = [{"group_id": "g1", "raw_entries": [raw("h1", project="Other", counterparty_id="cp-x", description="Office catering")]}]
+        result = asyncio.run(engine.recommend([raw("a"), raw("b")], include_external_context=False, historical_groups=history, history_available=True))
+        self.assertEqual(result["candidates"][0]["historical_pattern"]["matched_groups"], 0)
+        self.assertEqual(result["candidates"][0]["score_components"]["historical"], 0.0)
+
+    def test_historical_score_cannot_dominate_intrinsic_structure(self) -> None:
+        engine = AssemblyRecommendationEngine()
+        history = [{"group_id": f"g{i}", "raw_entries": [raw(f"h{i}a"), raw(f"h{i}b")]} for i in range(10)]
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", project="A", counterparty_id="cp-1", description="Service implementation"),
+                    raw("b", project="B", counterparty_id="cp-2", description="Office catering"),
+                ],
+                include_external_context=False,
+                historical_groups=history,
+                history_available=True,
+            )
+        )
+        candidate = result["candidates"][0]
+        self.assertLessEqual(candidate["score"], candidate["score_components"]["intrinsic"] * 0.70 + 0.30)
+
+    def test_strong_intrinsic_and_history_skips_external_search(self) -> None:
+        provider = FakeExternalProvider()
+        engine = AssemblyRecommendationEngine(external_provider=provider)
+        history = [{"group_id": "g1", "raw_entries": [raw("h1", description="Monthly service fee"), raw("h2", description="Monthly service support")]}]
+        result = asyncio.run(
+            engine.recommend(
+                [raw("a", description="Monthly service fee"), raw("b", description="Monthly service support")],
+                include_external_context=True,
+                historical_groups=history,
+                history_available=True,
+            )
+        )
+        self.assertEqual(provider.calls, 0)
+        self.assertEqual(result["candidates"][0]["external_context_trigger"]["reason"], "INTERNAL_CONFIDENCE_SUFFICIENT")
+
+    def test_weak_internal_confidence_may_trigger_external_search(self) -> None:
+        provider = FakeExternalProvider()
+        engine = AssemblyRecommendationEngine(external_provider=provider)
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", project="A", counterparty_id="cp-1", tx_date="2026-01-01", description="Implementation kickoff"),
+                    raw("b", project="B", counterparty_id="cp-2", tx_date="2026-08-01", description="Migration support"),
+                ],
+                include_external_context=True,
+                historical_groups=[],
+                history_available=True,
+            )
+        )
+        self.assertGreaterEqual(provider.calls, 1)
+        self.assertTrue(result["candidates"][0]["external_context_trigger"]["used"])
+
 
 if __name__ == "__main__":
     unittest.main()
-

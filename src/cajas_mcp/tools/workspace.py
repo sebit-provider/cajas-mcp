@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from mcp.server.fastmcp import Context, FastMCP
 
 from cajas_mcp.auth import resolve_bearer_token
@@ -31,4 +29,3 @@ def register_workspace_tools(mcp: FastMCP, settings: Settings) -> None:
             )
         except CajasMcpError as exc:
             return error_payload(exc)
-

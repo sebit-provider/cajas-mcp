@@ -32,6 +32,7 @@ ALLOWED_MCP_ACTIONS: frozenset[McpAction] = frozenset(
         McpAction.RECOMMEND,
         McpAction.PROPOSE,
         McpAction.PREPARE,
+        McpAction.IMPORT,
     }
 )
 
@@ -54,6 +55,17 @@ EXPOSED_TOOL_NAMES: frozenset[str] = frozenset(
         "cajas.search_events",
         "cajas.get_event",
         "cajas.recommend_assembly",
+        "cajas.inspect_raw_file",
+        "cajas.preview_raw_import",
+        "cajas.import_raw_file",
+        "cajas.inspect_coa_file",
+        "cajas.preview_coa_import",
+        "cajas.import_coa",
+        "cajas.find_criterion_group",
+        "cajas.resolve_standard_reference",
+        "cajas.propose_criterion_group",
+        "cajas.find_interpretations",
+        "cajas.propose_interpretation",
     }
 )
 
@@ -68,4 +80,3 @@ def assert_no_forbidden_tools(tool_names: set[str] | frozenset[str]) -> None:
     leaked = sorted(name for name in tool_names if any(term in name.lower() for term in forbidden_terms))
     if leaked:
         raise AssertionError(f"Forbidden MCP mutation tools exposed: {leaked}")
-
