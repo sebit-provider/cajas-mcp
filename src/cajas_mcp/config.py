@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -19,6 +20,13 @@ def _int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _csv_env(name: str) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 @dataclass(frozen=True)
@@ -43,12 +51,17 @@ class Settings:
     max_columns: int = 100
     max_cell_length: int = 5000
     import_session_ttl: int = 1800
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
+        public_url = os.getenv("CAJAS_MCP_PUBLIC_URL", "https://sebit-mcp.com").rstrip("/")
+        configured_hosts = _csv_env("CAJAS_MCP_ALLOWED_HOSTS")
+        configured_origins = _csv_env("CAJAS_MCP_ALLOWED_ORIGINS")
         return cls(
             cajas_api_base_url=os.getenv("CAJAS_API_BASE_URL", "").rstrip("/"),
-            public_url=os.getenv("CAJAS_MCP_PUBLIC_URL", "https://sebit-mcp.com").rstrip("/"),
+            public_url=public_url,
             transport=os.getenv("CAJAS_MCP_TRANSPORT", "streamable-http"),
             log_level=os.getenv("CAJAS_MCP_LOG_LEVEL", "INFO").upper(),
             mcp_path=os.getenv("CAJAS_MCP_PATH", "/mcp"),
@@ -67,6 +80,8 @@ class Settings:
             max_columns=_int_env("CAJAS_MAX_IMPORT_COLUMNS", 100),
             max_cell_length=_int_env("CAJAS_MAX_CELL_LENGTH", 5000),
             import_session_ttl=_int_env("CAJAS_IMPORT_SESSION_TTL", 1800),
+            allowed_hosts=tuple(configured_hosts or _default_allowed_hosts(public_url)),
+            allowed_origins=tuple(configured_origins or _default_allowed_origins(public_url)),
         )
 
     def validate_ready(self) -> list[str]:
@@ -74,3 +89,28 @@ class Settings:
         if not self.cajas_api_base_url:
             missing.append("CAJAS_API_BASE_URL")
         return missing
+
+
+def _default_allowed_hosts(public_url: str) -> list[str]:
+    hosts = ["localhost:*", "127.0.0.1:*", "[::1]:*"]
+    parsed = urlparse(public_url if "://" in public_url else f"https://{public_url}")
+    if parsed.hostname:
+        hosts.append(parsed.hostname)
+        hosts.append(f"{parsed.hostname}:*")
+    return _dedupe(hosts)
+
+
+def _default_allowed_origins(public_url: str) -> list[str]:
+    origins = ["http://localhost:*", "http://127.0.0.1:*"]
+    parsed = urlparse(public_url if "://" in public_url else f"https://{public_url}")
+    if parsed.scheme and parsed.hostname:
+        origins.append(f"{parsed.scheme}://{parsed.hostname}")
+    return _dedupe(origins)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        if value not in out:
+            out.append(value)
+    return out

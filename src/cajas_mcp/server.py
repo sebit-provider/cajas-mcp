@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.server.fastmcp import FastMCP
 
 from . import __version__
@@ -31,6 +32,11 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
         stateless_http=False,
         streamable_http_path=settings.mcp_path,
         log_level=settings.log_level if settings.log_level in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"} else "INFO",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=list(settings.allowed_hosts),
+            allowed_origins=list(settings.allowed_origins),
+        ),
     )
 
     register_workspace_tools(mcp, settings)
