@@ -70,6 +70,7 @@ if settings.auth_enabled:
 
     routes.extend(
         [
+            Route("/.well-known/oauth-protected-resource", protected_resource_metadata, methods=["GET", "OPTIONS"]),
             Route("/.well-known/oauth-protected-resource/mcp", protected_resource_metadata, methods=["GET", "OPTIONS"]),
             Route("/mcp/.well-known/oauth-protected-resource", protected_resource_metadata, methods=["GET", "OPTIONS"]),
         ]

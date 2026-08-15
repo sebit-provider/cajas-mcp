@@ -23,21 +23,30 @@ class AppAuthTests(unittest.TestCase):
             app_module = importlib.import_module("cajas_mcp.app")
             try:
                 with TestClient(app_module.app) as client:
-                    response = client.get(
+                    root_response = client.get(
+                        "/.well-known/oauth-protected-resource",
+                        headers={"host": "sebit-mcp.com"},
+                    )
+                    spec_response = client.get(
+                        "/.well-known/oauth-protected-resource/mcp",
+                        headers={"host": "sebit-mcp.com"},
+                    )
+                    sdk_response = client.get(
                         "/mcp/.well-known/oauth-protected-resource",
                         headers={"host": "sebit-mcp.com"},
                     )
             finally:
                 sys.modules.pop("cajas_mcp.app", None)
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertEqual(payload["resource"], "https://sebit-mcp.com/mcp")
-        self.assertEqual(payload["authorization_servers"], ["https://auth.cajas.example.test"])
-        self.assertEqual(
-            payload["scopes_supported"],
-            ["cajas:read", "cajas:raw:write", "cajas:coa:write", "cajas:criterion:read"],
-        )
+        for response in (root_response, spec_response, sdk_response):
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["resource"], "https://sebit-mcp.com/mcp")
+            self.assertEqual(payload["authorization_servers"], ["https://auth.cajas.example.test"])
+            self.assertEqual(
+                payload["scopes_supported"],
+                ["cajas:read", "cajas:raw:write", "cajas:coa:write", "cajas:criterion:read"],
+            )
 
 
 if __name__ == "__main__":
