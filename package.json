@@ -1,0 +1,40 @@
+{
+  "name": "@sebit/cajas-mcp",
+  "version": "0.1.0",
+  "description": "Vendor-neutral MCP adapter for CAJAS accounting workflows.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "homepage": "https://github.com/sebit-provider/cajas-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sebit-provider/cajas-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sebit-provider/cajas-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cajas",
+    "accounting",
+    "assembly",
+    "sebit"
+  ],
+  "files": [
+    "README.md",
+    "docs/**/*.md",
+    "src/**/*.py",
+    "pyproject.toml",
+    ".env.example"
+  ],
+  "scripts": {
+    "test": "PYTHONPATH=src python -m unittest discover -s tests -v",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
