@@ -18,6 +18,8 @@ def _auth_settings() -> Settings:
         auth_enabled=True,
         auth_issuer_url="https://auth.cajas.example.test",
         auth_resource_url="https://sebit-mcp.com/mcp",
+        oauth_scopes_supported=("cajas:read",),
+        oauth_required_scopes=("cajas:read",),
         allowed_hosts=("sebit-mcp.com", "localhost:*", "127.0.0.1:*"),
         allowed_origins=("https://sebit-mcp.com", "http://localhost:*"),
     )
@@ -60,6 +62,7 @@ class AuthTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["resource"], "https://sebit-mcp.com/mcp")
         self.assertEqual(payload["authorization_servers"], ["https://auth.cajas.example.test/"])
+        self.assertEqual(payload["scopes_supported"], ["cajas:read"])
 
     def test_protected_resource_metadata_aliases_are_exposed(self) -> None:
         mcp = create_mcp_server(_auth_settings())

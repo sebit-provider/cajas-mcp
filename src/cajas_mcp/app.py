@@ -4,9 +4,11 @@ import contextlib
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.datastructures import MutableHeaders
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
 from .config import Settings
@@ -15,6 +17,23 @@ from .server import create_mcp_server
 
 settings = Settings.from_env()
 mcp = create_mcp_server(settings)
+
+
+class OAuthChallengeScopeMiddleware:
+    def __init__(self, app: ASGIApp, required_scopes: tuple[str, ...]) -> None:
+        self.app = app
+        self.required_scopes = required_scopes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        async def send_with_scope(message: Message) -> None:
+            if message["type"] == "http.response.start" and message.get("status") == 401 and self.required_scopes:
+                headers = MutableHeaders(raw=message.setdefault("headers", []))
+                challenge = headers.get("www-authenticate") or ""
+                if challenge.lower().startswith("bearer") and "scope=" not in challenge.lower():
+                    headers["www-authenticate"] = f'{challenge}, scope="{" ".join(self.required_scopes)}"'
+            await send(message)
+
+        await self.app(scope, receive, send_with_scope)
 
 
 async def root(_: Any) -> JSONResponse:
@@ -83,6 +102,9 @@ app = Starlette(
     routes=routes,
     lifespan=lifespan,
 )
+
+if settings.auth_enabled:
+    app = OAuthChallengeScopeMiddleware(app, settings.oauth_required_scopes)
 
 app = CORSMiddleware(
     app,

@@ -98,9 +98,9 @@ class Settings:
             auth_resource_url=auth_resource_url,
             oauth_scopes_supported=tuple(
                 _csv_env("CAJAS_MCP_OAUTH_SCOPES_SUPPORTED")
-                or ["cajas:read", "cajas:raw:write", "cajas:coa:write", "cajas:criterion:read"]
+                or ["cajas:read"]
             ),
-            oauth_required_scopes=tuple(_csv_env("CAJAS_MCP_OAUTH_REQUIRED_SCOPES")),
+            oauth_required_scopes=tuple(_csv_env("CAJAS_MCP_OAUTH_REQUIRED_SCOPES") or ["cajas:read"]),
             session_secret=os.getenv("CAJAS_MCP_SESSION_SECRET") or None,
         )
 
