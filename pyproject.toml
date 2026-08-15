@@ -1,0 +1,33 @@
+[project]
+name = "cajas-mcp"
+version = "0.1.0"
+description = "Vendor-neutral MCP adapter for CAJAS accounting workflows"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "mcp>=1.0,<2",
+  "pydantic>=2.7",
+  "starlette>=0.37",
+  "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "mypy>=1.10",
+]
+
+[project.scripts]
+cajas-mcp = "cajas_mcp.server:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = false
+
