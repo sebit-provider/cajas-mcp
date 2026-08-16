@@ -44,6 +44,7 @@ def raw(
     credit_account_code: str = "2100",
     status: str = "draft",
     assembled_event_id: str | None = None,
+    account_codes: list[str] | None = None,
 ) -> dict:
     return {
         "id": raw_id,
@@ -59,6 +60,7 @@ def raw(
         "credit_account_code": credit_account_code,
         "status": status,
         "assembled_event_id": assembled_event_id,
+        "account_codes": account_codes or [],
     }
 
 
@@ -362,6 +364,77 @@ class AssemblyEngineTests(unittest.TestCase):
         signals = {signal["type"]: signal for signal in result["candidates"][0]["signals"]}
         self.assertFalse(signals["same_project"]["available"])
         self.assertFalse(signals["same_department"]["available"])
+
+    def test_revenue_collection_relationship_survives_missing_project_department(self) -> None:
+        engine = AssemblyRecommendationEngine(cluster_threshold=0.42)
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw(
+                        "a",
+                        project="",
+                        department="",
+                        counterparty_id="client-1",
+                        tx_date="2026-08-01",
+                        description="consulting service revenue accounts receivable",
+                        amount=5500000,
+                        debit_account_code="1100",
+                        credit_account_code="4100",
+                        account_codes=["1100", "4100"],
+                    ),
+                    raw(
+                        "b",
+                        project="",
+                        department="",
+                        counterparty_id="client-1",
+                        tx_date="2026-08-05",
+                        description="accounts receivable collection payment",
+                        amount=5500000,
+                        debit_account_code="1000",
+                        credit_account_code="1100",
+                        account_codes=["1000", "1100"],
+                    ),
+                ],
+                include_external_context=False,
+            )
+        )
+        candidate = result["candidates"][0]
+        self.assertGreater(candidate["relationship_score"], 0.45)
+        self.assertGreater(candidate["evidence_coverage"], 0.5)
+        self.assertIn("REVENUE_COLLECTION", candidate["relationship_types"])
+        signals = {signal["type"]: signal for signal in candidate["signals"]}
+        self.assertFalse(signals["same_project"]["available"])
+        self.assertFalse(signals["same_department"]["available"])
+
+    def test_same_project_unrelated_transactions_do_not_overboost_relationship(self) -> None:
+        engine = AssemblyRecommendationEngine(cluster_threshold=0.5)
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", project="IFRS18", department="Dev", description="server hosting fee", debit_account_code="5300", credit_account_code="2100"),
+                    raw("b", project="IFRS18", department="Dev", description="travel meal expense", debit_account_code="6200", credit_account_code="1000", counterparty_id="card"),
+                ],
+                include_external_context=False,
+            )
+        )
+        self.assertLess(result["candidates"][0]["relationship_score"], 0.5)
+
+    def test_singletons_preserve_nearest_below_threshold_relationship(self) -> None:
+        engine = AssemblyRecommendationEngine(cluster_threshold=0.9)
+        result = asyncio.run(
+            engine.recommend(
+                [
+                    raw("a", project="", department="", description="SaaS subscription prepayment", amount=1000, account_codes=["1500"]),
+                    raw("b", project="", department="", description="SaaS subscription expense recognition", amount=1000, account_codes=["1500", "6200"]),
+                ],
+                include_external_context=False,
+            )
+        )
+        self.assertEqual(len(result["candidates"]), 2)
+        nearest = [item for candidate in result["candidates"] for item in candidate["nearest_relationships"]]
+        self.assertTrue(nearest)
+        self.assertGreater(nearest[0]["relationship_score"], 0.0)
+        self.assertTrue(nearest[0]["below_grouping_threshold"])
 
     def test_identity_field_difference_is_not_integrity_warning(self) -> None:
         engine = AssemblyRecommendationEngine()

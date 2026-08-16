@@ -18,6 +18,8 @@ def _external_provider(settings: Settings):
         site=settings.stackexchange_site,
         key=settings.stackexchange_key,
         timeout=settings.external_timeout,
+        max_evidence_items=settings.stackexchange_max_evidence_items,
+        max_answers_per_question=settings.stackexchange_max_answers_per_question,
     )
 
 

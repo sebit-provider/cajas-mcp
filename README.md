@@ -60,11 +60,13 @@ MCP Client
 
 CAJAS MCP can analyze RAW accounting entries and suggest explainable Assembly candidates using:
 
-- RAW structural similarity;
+- transaction-to-transaction relationship signals such as semantic relationship, account pattern, amount pattern, dates, counterparty, source, and lifecycle hints;
 - organization-specific historical Assembly patterns weighted by governance quality;
 - optional external operational context.
 
 Recommendations are non-binding. They do not determine accounting treatment and never finalize accounting judgment.
+
+Project and department are optional context signals. Missing project or department metadata is not treated as negative evidence. Singleton recommendations may still include nearest below-threshold transaction relationships so users can review near matches without CAJAS MCP forcing a grouping.
 
 Historical patterns are supporting observations, not accounting rules or mandatory grouping rules.
 
@@ -90,7 +92,7 @@ Supported modes are `SUPPORT`, `CHALLENGE`, and `BALANCED`. The default is `BALA
 
 Community validation is opt-in only. Low internal confidence does not automatically call Stack Exchange. The validation result is returned as an independent `community_validation` block and does not change the internal recommendation score.
 
-Stack Exchange queries use privacy-safe generic operational and technical concepts. The first pass uses short neutral queries such as `cloud infrastructure saas` or `development environment cloud`. When an initial query returns no useful evidence, CAJAS MCP may retry with a small number of narrower decomposed concept queries.
+Stack Exchange queries use privacy-safe generic operational and technical concepts. The first pass uses short neutral queries such as `cloud infrastructure saas` or `development environment cloud`. When an initial query returns no useful evidence, CAJAS MCP may retry with a small number of narrower decomposed concept queries. Search results are treated as candidates, not evidence; CAJAS MCP retrieves bounded question and answer content through the official Stack Exchange API before classifying a public discussion as supporting, contradicting, neutral, or irrelevant.
 
 Stack Exchange content is public operational context, not accounting authority. CAJAS MCP treats all community content as `UNTRUSTED_EXTERNAL_DATA`; it never uses community results to create standards, determine accounting treatment, approve, sign, finalize, split, merge, or mutate Assembly/Event records.
 
@@ -102,6 +104,8 @@ STACKEXCHANGE_KEY=
 STACKEXCHANGE_SITE=stackoverflow
 STACKEXCHANGE_MAX_QUERIES=4
 STACKEXCHANGE_MAX_SEARCH_REQUESTS=4
+STACKEXCHANGE_MAX_EVIDENCE_ITEMS=4
+STACKEXCHANGE_MAX_ANSWERS_PER_QUESTION=2
 ```
 
 No Stack Exchange user login is required. Provider failures, rate limits, or disabled configuration degrade gracefully and do not fail the core Assembly recommendation.

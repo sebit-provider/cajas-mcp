@@ -47,17 +47,29 @@ def raw(description: str = "consulting deliverable billing accounts receivable c
     )
 
 
-def result(title: str, summary: str, tags: list[str] | None = None, *, question_id: int = 123) -> ExternalSearchResult:
+def result(
+    title: str,
+    summary: str,
+    tags: list[str] | None = None,
+    *,
+    question_id: int = 123,
+    url: str = "https://stackoverflow.com/questions/123/example",
+    content_summary: str | None = None,
+    content_reviewed: bool = False,
+) -> ExternalSearchResult:
     return ExternalSearchResult(
         provider="stackoverflow",
         title=title,
-        url="https://stackoverflow.com/questions/123/example",
+        url=url,
         summary=summary,
         tags=tags or ["workflow"],
         score=3,
         question_id=question_id,
         question_score=3,
         accepted_answer=True,
+        content_summary=content_summary,
+        content_reviewed=content_reviewed,
+        content_license="CC BY-SA 4.0" if content_reviewed else None,
     )
 
 
@@ -314,6 +326,57 @@ class CommunityValidationTests(unittest.TestCase):
             )
         )
         self.assertEqual(output["evidence"][0]["classification"], "CONTRADICTING")
+
+    def test_title_match_definition_body_is_not_supporting_evidence(self) -> None:
+        provider = FakeCommunityProvider(
+            [
+                result(
+                    "What is SaaS, PaaS and IaaS? With examples",
+                    "SaaS cloud infrastructure",
+                    tags=["saas", "cloud"],
+                    content_summary="What is SaaS? SaaS stands for software as a service. IaaS and PaaS are cloud service definitions.",
+                    content_reviewed=True,
+                )
+            ]
+        )
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
+                raw_entries=[raw("cloud infrastructure development environment saas")],
+                recommendations=[],
+            )
+        )
+        self.assertEqual(output["assessment"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(output["evidence"][0]["classification"], "NEUTRAL")
+        self.assertEqual(output["evidence"][0]["validation_relevance"], "LOW")
+        self.assertTrue(output["evidence"][0]["content_reviewed"])
+
+    def test_content_reviewed_supporting_evidence_includes_url_and_license(self) -> None:
+        provider = FakeCommunityProvider(
+            [
+                result(
+                    "Cloud SaaS implementation workflow",
+                    "cloud saas implementation",
+                    tags=["cloud", "saas"],
+                    question_id=789,
+                    url="https://stackoverflow.com/questions/789/cloud-saas-implementation",
+                    content_summary="Teams often handle cloud implementation, deployment operations, and SaaS subscription setup in one implementation workflow.",
+                    content_reviewed=True,
+                )
+            ]
+        )
+        output = asyncio.run(
+            CommunityValidationService(provider, provider_enabled=True, cache_ttl=0).validate(
+                request=CommunityValidationRequest(enabled=True, mode="BALANCED"),
+                raw_entries=[raw("cloud infrastructure development environment saas subscription")],
+                recommendations=[],
+            )
+        )
+        evidence = output["evidence"][0]
+        self.assertEqual(output["assessment"], "SUPPORTS")
+        self.assertEqual(evidence["url"], "https://stackoverflow.com/questions/789/cloud-saas-implementation")
+        self.assertEqual(evidence["content_license"], "CC BY-SA 4.0")
+        self.assertEqual(evidence["validation_relevance"], "HIGH")
 
     def test_prompt_injection_is_untrusted_data_only(self) -> None:
         provider = FakeCommunityProvider(

@@ -73,6 +73,7 @@ class AssemblyRecommendationEngine:
                 historical=historical,
                 external=ExternalContextSummary(available=False, used=False),
                 external_trigger={"used": False, "reason": "SINGLE_RAW_ENTRY"},
+                pair_relationships={},
             )
             candidate.warnings.append("Only one RAW entry was supplied; recommendation cannot compare related entries.")
             comparison = self._existing_judgment_comparison(entries, [[entry.id] for entry in entries])
@@ -83,7 +84,8 @@ class AssemblyRecommendationEngine:
                 "warnings": self._top_level_warnings(entries, comparison),
             }
 
-        pair_scores = self._pair_scores(entries)
+        pair_relationships = self._pair_relationships(entries)
+        pair_scores = {key: float(value.get("relationship_score") or 0.0) for key, value in pair_relationships.items()}
         groups = self._cluster(entries, pair_scores)
         candidates: list[AssemblyCandidate] = []
         for group in groups:
@@ -93,10 +95,19 @@ class AssemblyRecommendationEngine:
                 historical=historical,
                 external=ExternalContextSummary(available=False, used=False),
                 external_trigger={"used": False, "reason": "PRELIMINARY"},
+                pair_relationships=pair_relationships,
             )
             internal_confidence = max(preliminary.score_components.get("intrinsic", 0.0), preliminary.score_components.get("historical", 0.0))
             external, external_trigger = await self._maybe_external_context(group, internal_confidence, include_external_context)
-            candidates.append(self._candidate_for_group(group, historical=historical, external=external, external_trigger=external_trigger))
+            candidates.append(
+                self._candidate_for_group(
+                    group,
+                    historical=historical,
+                    external=external,
+                    external_trigger=external_trigger,
+                    pair_relationships=pair_relationships,
+                )
+            )
         candidates.sort(key=lambda item: item.score, reverse=True)
         recommended_groups = [candidate.raw_entry_ids for candidate in candidates]
         comparison = self._existing_judgment_comparison(entries, recommended_groups)
@@ -111,12 +122,11 @@ class AssemblyRecommendationEngine:
             "warnings": self._top_level_warnings(entries, comparison),
         }
 
-    def _pair_scores(self, entries: list[RawEntry]) -> dict[tuple[str, str], float]:
-        scores: dict[tuple[str, str], float] = {}
+    def _pair_relationships(self, entries: list[RawEntry]) -> dict[tuple[str, str], dict[str, Any]]:
+        relationships: dict[tuple[str, str], dict[str, Any]] = {}
         for left, right in itertools.combinations(entries, 2):
-            signals = self._signals_for_group([left, right], external=ExternalContextSummary(available=False, used=False))
-            scores[(left.id, right.id)] = self._intrinsic_score(signals)
-        return scores
+            relationships[(left.id, right.id)] = self._transaction_relationship(left, right)
+        return relationships
 
     def _cluster(self, entries: list[RawEntry], pair_scores: dict[tuple[str, str], float]) -> list[list[RawEntry]]:
         parent = {entry.id: entry.id for entry in entries}
@@ -147,9 +157,11 @@ class AssemblyRecommendationEngine:
         historical: dict[str, Any],
         external: ExternalContextSummary,
         external_trigger: dict[str, Any],
+        pair_relationships: dict[tuple[str, str], dict[str, Any]] | None = None,
     ) -> AssemblyCandidate:
         signals = self._signals_for_group(entries, external=external)
         intrinsic = self._intrinsic_score(signals)
+        relationship_summary = _relationship_summary(entries, pair_relationships or {}, self.cluster_threshold)
         historical_score = float(historical.get("score") or 0.0) if historical.get("available") else 0.0
         external_score = float(external.score or 0.0) if external.used else 0.0
         if historical.get("available"):
@@ -173,6 +185,12 @@ class AssemblyRecommendationEngine:
                 "historical": round(historical_score, 4),
                 "external": round(external_score, 4),
             },
+            relationship_score=relationship_summary["relationship_score"],
+            evidence_coverage=relationship_summary["evidence_coverage"],
+            confidence=relationship_summary["confidence"],
+            relationship_types=relationship_summary["relationship_types"],
+            pair_relationships=relationship_summary["pair_relationships"],
+            nearest_relationships=relationship_summary["nearest_relationships"],
             signals=signals,
             historical_pattern=historical,
             reasons=reasons,
@@ -184,6 +202,7 @@ class AssemblyRecommendationEngine:
 
     def _signals_for_group(self, entries: list[RawEntry], *, external: ExternalContextSummary) -> list[Signal]:
         return [
+            self._transaction_relationship_signal(entries),
             self._same_field(entries, "project", "same_project", "RAW entries share the same project."),
             self._same_field(entries, "department", "same_department", "RAW entries share the same department."),
             self._same_counterparty(entries),
@@ -202,6 +221,34 @@ class AssemblyRecommendationEngine:
                 explanation="External context is weak supporting context only and is never accounting evidence.",
             ),
         ]
+
+    def _transaction_relationship_signal(self, entries: list[RawEntry]) -> Signal:
+        if len(entries) < 2:
+            return Signal(
+                type="transaction_relationship",
+                score=0.0,
+                available=False,
+                explanation="At least two RAW entries are required to measure a transaction relationship.",
+            )
+        relationships = [self._transaction_relationship(left, right) for left, right in itertools.combinations(entries, 2)]
+        score = sum(float(item["relationship_score"]) for item in relationships) / len(relationships)
+        coverage = sum(float(item["evidence_coverage"]) for item in relationships) / len(relationships)
+        confidence = sum(float(item["confidence"]) for item in relationships) / len(relationships)
+        relationship_types = sorted({rel_type for item in relationships for rel_type in item.get("relationship_types", [])})
+        explanation = "RAW entries have observable transaction-level relationship signals."
+        if not relationship_types or relationship_types == ["UNKNOWN_RELATIONSHIP"]:
+            explanation = "No strong transaction lifecycle relationship was observed."
+        return Signal(
+            type="transaction_relationship",
+            score=round(score, 4),
+            value={
+                "relationship_types": relationship_types,
+                "evidence_coverage": round(coverage, 4),
+                "confidence": round(confidence, 4),
+                "pair_count": len(relationships),
+            },
+            explanation=explanation,
+        )
 
     @staticmethod
     def _same_field(entries: list[RawEntry], field: str, signal_type: str, explanation: str) -> Signal:
@@ -279,12 +326,81 @@ class AssemblyRecommendationEngine:
         score = len(intersection) / len(union) if union else 0.0
         return Signal(type="account_pattern", score=round(score, 4), value={"shared_accounts": sorted(intersection)}, explanation="Account codes overlap.")
 
+    def _transaction_relationship(self, left: RawEntry, right: RawEntry) -> dict[str, Any]:
+        left_features = _transaction_features(left)
+        right_features = _transaction_features(right)
+        components: dict[str, float] = {}
+
+        semantic = _concept_similarity(left_features["concepts"], right_features["concepts"])
+        text_similarity = SequenceMatcher(None, left_features["text"], right_features["text"]).ratio() if left_features["text"] and right_features["text"] else None
+        if semantic is not None or text_similarity is not None:
+            components["semantic_relationship"] = max(semantic or 0.0, text_similarity or 0.0)
+
+        account = _set_similarity(left_features["accounts"], right_features["accounts"])
+        if left_features["accounts"] and right_features["accounts"]:
+            components["account_relationship"] = account
+
+        amount = _amount_similarity(left, right)
+        if amount is not None:
+            components["amount_relationship"] = amount
+
+        temporal = _date_pair_score(left, right)
+        if temporal is not None:
+            components["temporal_relationship"] = temporal
+
+        counterparty = _counterparty_pair_score(left, right)
+        if counterparty is not None:
+            components["counterparty_relationship"] = counterparty
+
+        source = _source_pair_score(left, right)
+        if source is not None:
+            components["source_relationship"] = source
+
+        lifecycle = _lifecycle_relationship_score(left_features, right_features)
+        components["lifecycle_relationship"] = lifecycle["score"]
+
+        weights = {
+            "semantic_relationship": 0.20,
+            "account_relationship": 0.18,
+            "amount_relationship": 0.14,
+            "temporal_relationship": 0.14,
+            "counterparty_relationship": 0.12,
+            "source_relationship": 0.07,
+            "lifecycle_relationship": 0.15,
+        }
+        available_total = sum(weights[name] for name in components)
+        score = sum(components[name] * weights[name] for name in components) / available_total if available_total else 0.0
+        if (
+            lifecycle["types"] == ["UNKNOWN_RELATIONSHIP"]
+            and components.get("semantic_relationship", 0.0) < 0.35
+            and components.get("counterparty_relationship") == 0.0
+        ):
+            score = min(score, 0.38)
+        coverage = available_total / sum(weights.values())
+        relationship_types = lifecycle["types"] or _fallback_relationship_types(components)
+        confidence = score * 0.65 + coverage * 0.35
+        return {
+            "left_raw_entry_id": left.id,
+            "right_raw_entry_id": right.id,
+            "relationship_score": round(max(0.0, min(1.0, score)), 4),
+            "evidence_coverage": round(max(0.0, min(1.0, coverage)), 4),
+            "confidence": round(max(0.0, min(1.0, confidence)), 4),
+            "relationship_types": relationship_types,
+            "components": {name: round(value, 4) for name, value in components.items()},
+            "below_grouping_threshold": score < self.cluster_threshold,
+        }
+
     def _intrinsic_score(self, signals: list[Signal]) -> float:
         by_type = {signal.type: signal.score for signal in signals}
+        available = {signal.type: signal.available for signal in signals}
         intrinsic_weights = {k: v for k, v in self.weights.__dict__.items() if k != "external_context"}
-        weighted = sum(by_type.get(name, 0.0) * weight for name, weight in intrinsic_weights.items())
-        total = sum(intrinsic_weights.values()) or 1.0
-        return max(0.0, min(1.0, weighted / total))
+        weighted = sum(by_type.get(name, 0.0) * weight for name, weight in intrinsic_weights.items() if available.get(name, True))
+        total = sum(weight for name, weight in intrinsic_weights.items() if available.get(name, True)) or 1.0
+        legacy_score = max(0.0, min(1.0, weighted / total))
+        if available.get("transaction_relationship"):
+            transaction_score = by_type.get("transaction_relationship", 0.0)
+            return max(0.0, min(1.0, transaction_score * 0.55 + legacy_score * 0.45))
+        return legacy_score
 
     def _historical_summary(
         self,
@@ -353,6 +469,9 @@ class AssemblyRecommendationEngine:
             count_similarity = 1.0 - abs(len(entries) - len(historical_entries)) / max(len(entries), len(historical_entries))
         source = _set_similarity(candidate_features["sources"], historical_features["sources"])
         event_hint = _set_similarity(candidate_features["event_hints"], historical_features["event_hints"])
+        relationship_type_similarity = _set_similarity(candidate_features["relationship_types"], historical_features["relationship_types"])
+        relationship_score_similarity = 1.0 - abs(candidate_features["relationship_score"] - historical_features["relationship_score"])
+        relationship_score_similarity = max(0.0, min(1.0, relationship_score_similarity))
         components = {
             "same_or_similar_project": project,
             "same_department_structure": department,
@@ -362,19 +481,23 @@ class AssemblyRecommendationEngine:
             "similar_raw_count": count_similarity,
             "same_source_pattern": source,
             "similar_event_hint": event_hint,
+            "similar_transaction_relationship_type": relationship_type_similarity,
+            "similar_transaction_relationship_strength": relationship_score_similarity,
         }
         for name, value in components.items():
             if value >= 0.5:
                 matched.append(name)
         similarity = (
-            project * 0.14
-            + department * 0.10
-            + counterparty * 0.18
-            + accounts * 0.20
-            + description * 0.16
-            + count_similarity * 0.08
-            + source * 0.07
-            + event_hint * 0.07
+            project * 0.08
+            + department * 0.06
+            + counterparty * 0.14
+            + accounts * 0.18
+            + description * 0.14
+            + count_similarity * 0.06
+            + source * 0.06
+            + event_hint * 0.06
+            + relationship_type_similarity * 0.14
+            + relationship_score_similarity * 0.08
         )
         governance = _governance_quality(group)
         structural_similarity = max(0.0, min(1.0, similarity))
@@ -572,6 +695,8 @@ def _normalized_text(value: str) -> str:
 
 def _group_features(entries: list[RawEntry]) -> dict[str, Any]:
     accounts: set[str] = set()
+    relationship_types: set[str] = set()
+    relationship_scores: list[float] = []
     for entry in entries:
         accounts.update(str(code or "").strip() for code in entry.account_codes)
         accounts.add(str(entry.debit_account_code or "").strip())
@@ -579,6 +704,12 @@ def _group_features(entries: list[RawEntry]) -> dict[str, Any]:
         for line in entry.lines:
             if isinstance(line, dict):
                 accounts.add(str(line.get("account_code") or "").strip())
+    if len(entries) >= 2:
+        engine = AssemblyRecommendationEngine()
+        for left, right in itertools.combinations(entries, 2):
+            relationship = engine._transaction_relationship(left, right)
+            relationship_scores.append(float(relationship.get("relationship_score") or 0.0))
+            relationship_types.update(str(item) for item in relationship.get("relationship_types") or [])
     return {
         "projects": {str(entry.project or "").strip().lower() for entry in entries if str(entry.project or "").strip()},
         "departments": {str(entry.department or "").strip().lower() for entry in entries if str(entry.department or "").strip()},
@@ -591,6 +722,8 @@ def _group_features(entries: list[RawEntry]) -> dict[str, Any]:
         "sources": {str(entry.source or "").strip().lower() for entry in entries if str(entry.source or "").strip()},
         "event_hints": {str(entry.event_hint_key or "").strip().lower() for entry in entries if str(entry.event_hint_key or "").strip()},
         "text": _normalized_text(" ".join(" ".join([entry.description or "", entry.memo or "", entry.event_hint_key or ""]) for entry in entries)),
+        "relationship_types": relationship_types,
+        "relationship_score": sum(relationship_scores) / len(relationship_scores) if relationship_scores else 0.0,
     }
 
 
@@ -598,6 +731,220 @@ def _set_similarity(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
     return len(left & right) / len(left | right)
+
+
+def _transaction_features(entry: RawEntry) -> dict[str, Any]:
+    text = _normalized_text(" ".join([entry.description or "", entry.memo or "", entry.event_hint_key or ""]))
+    accounts = set(str(code or "").strip() for code in entry.account_codes if str(code or "").strip())
+    accounts.add(str(entry.debit_account_code or "").strip())
+    accounts.add(str(entry.credit_account_code or "").strip())
+    for line in entry.lines:
+        if isinstance(line, dict):
+            accounts.add(str(line.get("account_code") or "").strip())
+    return {
+        "text": text,
+        "concepts": _transaction_concepts(text),
+        "accounts": {account for account in accounts if account},
+    }
+
+
+def _transaction_concepts(text: str) -> set[str]:
+    concepts: set[str] = set()
+    mapping = {
+        "매출채권": "receivable",
+        "채권": "receivable",
+        "회수": "collection",
+        "입금": "collection",
+        "매출": "revenue",
+        "청구": "billing",
+        "수익": "revenue",
+        "선급": "prepayment",
+        "선수": "deferred",
+        "상각": "recognition",
+        "인식": "recognition",
+        "정산": "settlement",
+        "조정": "adjustment",
+        "취소": "reversal",
+        "환입": "reversal",
+        "구축": "implementation",
+        "개발환경": "development_environment",
+        "클라우드": "cloud",
+        "운영": "operations",
+        "이용권": "subscription",
+        "라이선스": "license",
+        "구독": "subscription",
+        "산출물": "deliverable",
+        "검수": "acceptance",
+        "용역": "service",
+        "외주": "procurement",
+        "유지보수": "maintenance",
+        "감사": "audit",
+    }
+    for key, value in mapping.items():
+        if key in text:
+            concepts.add(value)
+    english = {
+        "receivable",
+        "collection",
+        "payment",
+        "revenue",
+        "billing",
+        "prepayment",
+        "prepaid",
+        "recognition",
+        "settlement",
+        "adjustment",
+        "reversal",
+        "implementation",
+        "development",
+        "environment",
+        "cloud",
+        "operations",
+        "subscription",
+        "license",
+        "deliverable",
+        "acceptance",
+        "service",
+        "procurement",
+        "maintenance",
+        "audit",
+        "saas",
+        "aws",
+        "azure",
+        "docker",
+        "database",
+    }
+    tokens = set(text.split())
+    for token in english:
+        if token in tokens or token.replace("_", " ") in text:
+            concepts.add(token)
+    if "prepaid" in concepts:
+        concepts.add("prepayment")
+    if "development" in concepts and "environment" in concepts:
+        concepts.add("development_environment")
+    return concepts
+
+
+def _concept_similarity(left: set[str], right: set[str]) -> float | None:
+    if not left or not right:
+        return None
+    return len(left & right) / len(left | right)
+
+
+def _amount_similarity(left: RawEntry, right: RawEntry) -> float | None:
+    left_amount = abs(float(left.total_amount if left.total_amount is not None else left.amount or 0))
+    right_amount = abs(float(right.total_amount if right.total_amount is not None else right.amount or 0))
+    if left_amount <= 0 or right_amount <= 0:
+        return None
+    ratio = min(left_amount, right_amount) / max(left_amount, right_amount)
+    return max(0.0, min(1.0, ratio))
+
+
+def _date_pair_score(left: RawEntry, right: RawEntry) -> float | None:
+    left_date = _parse_date(left.tx_date or left.entry_date)
+    right_date = _parse_date(right.tx_date or right.entry_date)
+    if left_date is None or right_date is None:
+        return None
+    span = abs((left_date - right_date).days)
+    return max(0.0, 1.0 - min(span, 90) / 90)
+
+
+def _counterparty_pair_score(left: RawEntry, right: RawEntry) -> float | None:
+    left_value = str(left.counterparty_id or left.counterpart_id or left.counterparty_name or "").strip().lower()
+    right_value = str(right.counterparty_id or right.counterpart_id or right.counterparty_name or "").strip().lower()
+    if not left_value or not right_value:
+        return None
+    return 1.0 if left_value == right_value else 0.0
+
+
+def _source_pair_score(left: RawEntry, right: RawEntry) -> float | None:
+    left_values = [str(left.import_batch_id or "").strip().lower(), str(left.source or "").strip().lower()]
+    right_values = [str(right.import_batch_id or "").strip().lower(), str(right.source or "").strip().lower()]
+    comparable = [(a, b) for a, b in zip(left_values, right_values, strict=False) if a and b]
+    if not comparable:
+        return None
+    return sum(1.0 if a == b else 0.0 for a, b in comparable) / len(comparable)
+
+
+def _lifecycle_relationship_score(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    concepts = set(left["concepts"]) | set(right["concepts"])
+    types: list[str] = []
+    score = 0.0
+    if {"revenue", "receivable", "collection"} & concepts and "collection" in concepts and ("revenue" in concepts or "receivable" in concepts):
+        types.append("REVENUE_COLLECTION")
+        score = max(score, 0.82)
+    if "prepayment" in concepts and "recognition" in concepts:
+        types.append("PREPAYMENT_RECOGNITION")
+        score = max(score, 0.78)
+    if "settlement" in concepts and ({"revenue", "billing", "payment", "collection"} & concepts):
+        types.append("SETTLEMENT_SEQUENCE")
+        score = max(score, 0.72)
+    if {"adjustment", "reversal"} & concepts:
+        types.append("REVERSAL_OR_ADJUSTMENT")
+        score = max(score, 0.68)
+    if {"implementation", "development_environment", "cloud", "operations", "subscription", "saas"} & concepts:
+        if len({"implementation", "development_environment", "cloud", "operations", "subscription", "saas"} & concepts) >= 2:
+            types.append("IMPLEMENTATION_OPERATION_SEQUENCE")
+            score = max(score, 0.64)
+    if "procurement" in concepts and ({"service", "deliverable", "acceptance"} & concepts):
+        types.append("RELATED_PROCUREMENT")
+        score = max(score, 0.62)
+    if _concept_similarity(set(left["concepts"]), set(right["concepts"])) and (_concept_similarity(set(left["concepts"]), set(right["concepts"])) or 0.0) >= 0.5:
+        types.append("SAME_OPERATION")
+        score = max(score, 0.58)
+    return {"score": score, "types": sorted(set(types)) or ["UNKNOWN_RELATIONSHIP"]}
+
+
+def _fallback_relationship_types(components: dict[str, float]) -> list[str]:
+    if components.get("amount_relationship", 0.0) >= 0.95 and components.get("temporal_relationship", 0.0) >= 0.75:
+        return ["RECURRING_TRANSACTION"]
+    if components.get("semantic_relationship", 0.0) >= 0.55:
+        return ["SAME_OPERATION"]
+    return ["UNKNOWN_RELATIONSHIP"]
+
+
+def _relationship_summary(
+    entries: list[RawEntry],
+    pair_relationships: dict[tuple[str, str], dict[str, Any]],
+    cluster_threshold: float,
+) -> dict[str, Any]:
+    ids = {entry.id for entry in entries}
+    inside: list[dict[str, Any]] = []
+    nearest: list[dict[str, Any]] = []
+    for (left_id, right_id), relationship in pair_relationships.items():
+        left_in = left_id in ids
+        right_in = right_id in ids
+        if left_in and right_in:
+            inside.append(relationship)
+        elif left_in or right_in:
+            if float(relationship.get("relationship_score") or 0.0) > 0.0:
+                other_id = right_id if left_in else left_id
+                source_id = left_id if left_in else right_id
+                nearest.append(
+                    {
+                        "raw_entry_id": source_id,
+                        "related_raw_entry_id": other_id,
+                        "relationship_score": relationship.get("relationship_score"),
+                        "evidence_coverage": relationship.get("evidence_coverage"),
+                        "confidence": relationship.get("confidence"),
+                        "relationship_types": relationship.get("relationship_types") or [],
+                        "below_grouping_threshold": float(relationship.get("relationship_score") or 0.0) < cluster_threshold,
+                    }
+                )
+    selected = inside
+    relationship_score = sum(float(item.get("relationship_score") or 0.0) for item in selected) / len(selected) if selected else 0.0
+    coverage = sum(float(item.get("evidence_coverage") or 0.0) for item in selected) / len(selected) if selected else 0.0
+    confidence = sum(float(item.get("confidence") or 0.0) for item in selected) / len(selected) if selected else 0.0
+    relationship_types = sorted({rel_type for item in selected for rel_type in item.get("relationship_types", [])})
+    nearest.sort(key=lambda item: float(item.get("relationship_score") or 0.0), reverse=True)
+    return {
+        "relationship_score": round(relationship_score, 4),
+        "evidence_coverage": round(coverage, 4),
+        "confidence": round(confidence, 4),
+        "relationship_types": relationship_types,
+        "pair_relationships": selected[:20],
+        "nearest_relationships": nearest[:5],
+    }
 
 
 def _governance_quality(group: dict[str, Any]) -> dict[str, Any]:

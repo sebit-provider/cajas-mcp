@@ -20,6 +20,11 @@ class ExternalSearchResult:
     tags: list[str] | None = None
     accepted_answer: bool | None = None
     retrieved_at: str | None = None
+    content_summary: str | None = None
+    content_reviewed: bool = False
+    retrieval_relevance: str | None = None
+    validation_relevance: str | None = None
+    content_license: str | None = None
     trust: str = TRUST_UNTRUSTED_EXTERNAL_DATA
 
 

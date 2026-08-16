@@ -236,6 +236,7 @@ class CommunityValidationService:
         supporting = [item for item in relevant if item["classification"] == "SUPPORTING"]
         contradicting = [item for item in relevant if item["classification"] == "CONTRADICTING"]
         neutral = [item for item in relevant if item["classification"] == "NEUTRAL"]
+        content_reviewed = [item for item in evidence if item.get("content_reviewed")]
         assessment = _assessment(len(supporting), len(contradicting), len(neutral))
 
         output = {
@@ -252,13 +253,15 @@ class CommunityValidationService:
                 "requests_made": requests_made,
                 "max_search_requests": self.max_search_requests,
             },
+            "search_candidates": len(evidence),
+            "content_reviewed": len(content_reviewed),
             "sources_checked": len(evidence),
             "relevant_sources": len(relevant),
             "supporting_patterns": len(supporting),
             "contradicting_patterns": len(contradicting),
             "neutral_patterns": len(neutral),
             "assessment": assessment,
-            "community_evidence_confidence": _community_confidence(len(relevant), len(supporting), len(contradicting)),
+            "community_evidence_confidence": _community_confidence(len(relevant), len(supporting), len(contradicting), len(content_reviewed)),
             "evidence": relevant[:8],
             "summary": _summary(assessment, len(supporting), len(contradicting), len(neutral)),
             "provider_metadata": _safe_provider_metadata(provider_metadata),
@@ -410,22 +413,34 @@ def _classify_results(results: list[ExternalSearchResult], purpose: str, concept
     out: list[dict[str, Any]] = []
     concept_set = {c.lower() for c in concepts}
     for result in results:
-        text = " ".join([result.title or "", result.summary or "", " ".join(result.tags or [])]).lower()
+        retrieval_text = " ".join([result.title or "", result.summary or "", " ".join(result.tags or [])]).lower()
+        validation_text = str(result.content_summary or "").lower() if result.content_reviewed else retrieval_text
+        text = validation_text
         overlap = sorted(token for token in concept_set if token and token in text)
         support_hits = sum(1 for token in SUPPORT_TERMS - QUERY_STOP_TERMS if token in text)
         challenge_hits = sum(1 for token in CHALLENGE_TERMS if token in text)
-        if len(overlap) < 1 and support_hits + challenge_hits < 2:
+        definition_only = _looks_like_definition_only(validation_text)
+        if result.content_reviewed and definition_only:
+            classification = "NEUTRAL" if overlap else "IRRELEVANT"
+            reason = "The discussion explains concepts but does not address whether the transactions belong to one operational lifecycle."
+            validation_relevance = "LOW"
+        elif len(overlap) < 1 and support_hits + challenge_hits < 2:
             classification = "IRRELEVANT"
             reason = "Insufficient overlap with sanitized operational concepts."
+            validation_relevance = "LOW"
         elif challenge_hits >= 2 and challenge_hits >= support_hits:
             classification = "CONTRADICTING"
             reason = "Public discussion appears to describe separate lifecycle or responsibility terms."
+            validation_relevance = "HIGH" if result.content_reviewed else "MEDIUM"
         elif support_hits >= 2 and support_hits > challenge_hits:
             classification = "SUPPORTING"
             reason = "Public discussion appears to describe related operational workflow terms."
+            validation_relevance = "HIGH" if result.content_reviewed else "MEDIUM"
         else:
             classification = "NEUTRAL" if overlap else "IRRELEVANT"
             reason = "Public discussion overlaps with the validation query but does not resolve direction strongly."
+            validation_relevance = "MEDIUM" if overlap else "LOW"
+        retrieval_overlap = sorted(token for token in concept_set if token and token in retrieval_text)
         out.append(
             {
                 "classification": classification,
@@ -439,6 +454,10 @@ def _classify_results(results: list[ExternalSearchResult], purpose: str, concept
                 "accepted_answer": result.accepted_answer,
                 "answer_score": result.answer_score,
                 "matched_concepts": overlap[:8],
+                "retrieval_relevance": "HIGH" if retrieval_overlap else "LOW",
+                "validation_relevance": validation_relevance,
+                "content_reviewed": bool(result.content_reviewed),
+                "content_license": result.content_license,
                 "reason": reason,
                 "trust": TRUST_UNTRUSTED_EXTERNAL_DATA,
             }
@@ -493,11 +512,12 @@ def _assessment(supporting: int, contradicting: int, neutral: int) -> str:
     return "INSUFFICIENT_EVIDENCE"
 
 
-def _community_confidence(relevant: int, supporting: int, contradicting: int) -> float:
+def _community_confidence(relevant: int, supporting: int, contradicting: int, content_reviewed: int = 0) -> float:
     if relevant <= 0:
         return 0.0
     balance_penalty = 0.2 if supporting and contradicting else 0.0
-    return round(max(0.0, min(0.75, 0.18 + min(relevant, 6) * 0.08 - balance_penalty)), 4)
+    content_bonus = min(content_reviewed, relevant, 4) * 0.04
+    return round(max(0.0, min(0.75, 0.14 + min(relevant, 6) * 0.06 + content_bonus - balance_penalty)), 4)
 
 
 def _summary(assessment: str, supporting: int, contradicting: int, neutral: int) -> str:
@@ -513,9 +533,27 @@ def _summary(assessment: str, supporting: int, contradicting: int, neutral: int)
 def _safe_provider_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {
         key: metadata.get(key)
-        for key in ("http_status", "quota_remaining", "quota_max", "backoff", "has_more")
+        for key in (
+            "http_status",
+            "quota_remaining",
+            "quota_max",
+            "backoff",
+            "has_more",
+            "detail_quota_remaining",
+            "answers_quota_remaining",
+            "detail_backoff",
+            "answers_backoff",
+        )
         if key in metadata
     }
+
+
+def _looks_like_definition_only(text: str) -> bool:
+    if not text:
+        return False
+    definition_terms = ("what is", "definition", "stands for", "iaas", "paas", "saas")
+    relationship_terms = ("workflow", "lifecycle", "billing", "operation", "operations", "implementation", "responsibility", "settlement")
+    return sum(1 for term in definition_terms if term in text) >= 2 and sum(1 for term in relationship_terms if term in text) <= 1
 
 
 def _clean_concept(value: str) -> str:

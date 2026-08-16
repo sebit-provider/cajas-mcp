@@ -27,6 +27,12 @@ class AssemblyCandidate(BaseModel):
     raw_entry_ids: list[str]
     score: float = Field(ge=0.0, le=1.0)
     score_components: dict[str, float] = Field(default_factory=dict)
+    relationship_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    relationship_types: list[str] = Field(default_factory=list)
+    pair_relationships: list[dict[str, Any]] = Field(default_factory=list)
+    nearest_relationships: list[dict[str, Any]] = Field(default_factory=list)
     signals: list[Signal]
     historical_pattern: dict[str, Any] = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
