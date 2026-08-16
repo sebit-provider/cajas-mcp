@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -8,6 +9,7 @@ from starlette.testclient import TestClient
 
 from cajas_mcp.auth import CajasTokenVerifier, token_binding
 from cajas_mcp.config import Settings
+from cajas_mcp.resources.capabilities import PROTOCOL_VERSION
 from cajas_mcp.server import create_mcp_server
 
 
@@ -40,19 +42,25 @@ class AuthTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             settings.validate_startup()
 
-    def test_unauthenticated_mcp_returns_www_authenticate_resource_metadata(self) -> None:
+    def test_unauthenticated_mcp_allows_protocol_discovery(self) -> None:
         mcp = create_mcp_server(_auth_settings())
         with TestClient(mcp.streamable_http_app()) as client:
             response = client.post(
                 "/mcp",
                 headers={"host": "sebit-mcp.com", "content-type": "application/json", "accept": "application/json, text/event-stream"},
-                json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "manifest-import-test", "version": "0.0.0"},
+                    },
+                },
             )
-        self.assertEqual(response.status_code, 401)
-        www = response.headers.get("www-authenticate") or ""
-        self.assertIn("Bearer", www)
-        self.assertIn("resource_metadata=", www)
-        self.assertIn("https://sebit-mcp.com/mcp/.well-known/oauth-protected-resource", www)
+        self.assertNotEqual(response.status_code, 401)
+        self.assertNotIn("www-authenticate", response.headers)
 
     def test_protected_resource_metadata_is_exposed(self) -> None:
         mcp = create_mcp_server(_auth_settings())
@@ -61,7 +69,7 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["resource"], "https://sebit-mcp.com/mcp")
-        self.assertEqual(payload["authorization_servers"], ["https://auth.cajas.example.test/"])
+        self.assertEqual(payload["authorization_servers"], ["https://auth.cajas.example.test"])
         self.assertEqual(payload["scopes_supported"], ["cajas:read"])
 
     def test_protected_resource_metadata_aliases_are_exposed(self) -> None:
@@ -85,6 +93,16 @@ class AuthTests(unittest.TestCase):
                         },
                     )
         self.assertNotEqual(response.status_code, 401)
+
+    def test_data_tool_still_requires_auth_without_global_mcp_guard(self) -> None:
+        async def run():
+            mcp = create_mcp_server(_auth_settings())
+            return await mcp.call_tool("cajas.list_workspaces", {})
+
+        result = asyncio.run(run())
+        payload = json.loads(result[0].text)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], "AUTH_REQUIRED")
 
     def test_token_verifier_uses_cajas_identity(self) -> None:
         async def run():

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from . import __version__
-from .auth import CajasTokenVerifier
 from .config import Settings
 from .resources.capabilities import capabilities_payload
 from .security.policy import EXPOSED_TOOL_NAMES, assert_no_forbidden_tools
@@ -30,16 +28,6 @@ Recommendations are non-binding and never approve, sign, finalize, confirm, or a
 def create_mcp_server(settings: Settings | None = None) -> FastMCP:
     settings = settings or Settings.from_env()
     settings.validate_startup()
-    auth_settings = (
-        AuthSettings(
-            issuer_url=settings.auth_issuer_url,
-            resource_server_url=settings.auth_resource_url,
-            required_scopes=list(settings.oauth_required_scopes),
-            service_documentation_url=settings.public_url,
-        )
-        if settings.auth_enabled
-        else None
-    )
     mcp = FastMCP(
         "cajas-mcp",
         instructions=SERVER_INSTRUCTIONS.strip(),
@@ -52,8 +40,13 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             allowed_hosts=list(settings.allowed_hosts),
             allowed_origins=list(settings.allowed_origins),
         ),
-        auth=auth_settings,
-        token_verifier=CajasTokenVerifier(settings) if settings.auth_enabled else None,
+        # Do not attach FastMCP's global OAuth guard here. Some MCP clients
+        # import a server manifest by calling initialize/tools/list without a
+        # token; global auth rejects that discovery path before the client can
+        # learn the tool catalog. CAJAS data access remains protected inside
+        # each tool through resolve_bearer_token() and the CAJAS API.
+        auth=None,
+        token_verifier=None,
     )
 
     register_workspace_tools(mcp, settings)
@@ -77,6 +70,10 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             "resource_name": "CAJAS MCP",
             "resource_documentation": settings.public_url,
         }
+
+        @mcp.custom_route("/.well-known/oauth-protected-resource", methods=["GET", "OPTIONS"], include_in_schema=False)
+        async def protected_resource_metadata(request: Request) -> Response:
+            return JSONResponse(metadata_payload)
 
         @mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"], include_in_schema=False)
         async def protected_resource_metadata_for_mcp_path(request: Request) -> Response:

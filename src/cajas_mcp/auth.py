@@ -15,7 +15,10 @@ from .errors import CajasMcpError
 def _extract_authorization_from_context(ctx: Context | None) -> str | None:
     if ctx is None:
         return None
-    request_context = getattr(ctx, "request_context", None)
+    try:
+        request_context = getattr(ctx, "request_context", None)
+    except ValueError:
+        return None
     candidates: list[Any] = []
     if request_context is not None:
         candidates.extend(

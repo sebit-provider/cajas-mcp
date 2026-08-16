@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from starlette.testclient import TestClient
 
+from cajas_mcp.resources.capabilities import PROTOCOL_VERSION
+
 
 class AppAuthTests(unittest.TestCase):
     def test_production_app_serves_sdk_challenge_metadata_alias(self) -> None:
@@ -42,7 +44,16 @@ class AppAuthTests(unittest.TestCase):
                             "content-type": "application/json",
                             "accept": "application/json, text/event-stream",
                         },
-                        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": PROTOCOL_VERSION,
+                                "capabilities": {},
+                                "clientInfo": {"name": "manifest-import-test", "version": "0.0.0"},
+                            },
+                        },
                     )
             finally:
                 sys.modules.pop("cajas_mcp.app", None)
@@ -55,10 +66,8 @@ class AppAuthTests(unittest.TestCase):
             self.assertEqual(payload["bearer_methods_supported"], ["header"])
             self.assertEqual(payload["scopes_supported"], ["cajas:read"])
 
-        self.assertEqual(challenge_response.status_code, 401)
-        challenge = challenge_response.headers.get("www-authenticate") or ""
-        self.assertIn("resource_metadata=", challenge)
-        self.assertIn('scope="cajas:read"', challenge)
+        self.assertNotEqual(challenge_response.status_code, 401)
+        self.assertNotIn("www-authenticate", challenge_response.headers)
 
 
 if __name__ == "__main__":

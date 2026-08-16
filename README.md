@@ -167,7 +167,15 @@ CAJAS_MCP_AUTH_ISSUER_URL=https://your-cajas-auth.example
 CAJAS_MCP_OAUTH_SCOPES_SUPPORTED=cajas:read,cajas:raw:write,cajas:coa:write,cajas:criterion:read
 ```
 
-When enabled, unauthenticated `/mcp` requests receive `401` with `WWW-Authenticate` and protected-resource metadata. Presented access tokens are validated against CAJAS `/api/auth/me`, then forwarded per request to the CAJAS API. OAuth scopes only describe broad request categories; CAJAS workspace roles still decide whether a read or mutation is allowed.
+When enabled, CAJAS MCP exposes OAuth protected-resource metadata for clients that support MCP OAuth discovery. The MCP protocol discovery path remains accessible without a token so clients can import the manifest, list tools, and read non-sensitive capabilities. Actual CAJAS data tools still require `Authorization: Bearer <CAJAS user token>` or an OAuth-issued CAJAS MCP access token; missing tokens return structured `AUTH_REQUIRED` errors from the tool layer.
+
+For MCP clients that do not complete OAuth discovery automatically, configure an HTTP header instead:
+
+```text
+Authorization: Bearer <CAJAS user token>
+```
+
+Do not use a shared production token for multiple users. OAuth scopes only describe broad request categories; CAJAS workspace roles still decide whether a read or mutation is allowed.
 
 Workspace selection remains explicit. `cajas.list_workspaces` works without an `org_id`; workspace-scoped tools require `org_id`, which is forwarded as `x-org-id` and verified by CAJAS backend membership checks.
 
@@ -176,7 +184,7 @@ RAW and CoA import preview sessions are process-local and bound to the bearer to
 ## Planned
 
 - Human-approved Criterion/Interpretation creation and Event linkage.
-- CAJAS authorization-code login facade if a dedicated OAuth authorization server is required.
+- Shared preview/session storage for multi-replica Railway deployments.
 
 ## Non-Goals
 
