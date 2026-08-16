@@ -22,6 +22,7 @@
   ],
   "files": [
     "README.md",
+    "lhm.plugin.json",
     "docs/**/*.md",
     "src/**/*.py",
     "pyproject.toml",

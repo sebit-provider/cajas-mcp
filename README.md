@@ -179,6 +179,18 @@ For MCP clients that do not complete OAuth discovery automatically, configure an
 Authorization: Bearer <CAJAS user token>
 ```
 
+For LobeHub and other clients that expose an `API Key` or custom HTTP header field, use a CAJAS MCP personal access token:
+
+```text
+Endpoint: https://sebit-mcp.com/mcp
+Transport: Streamable HTTP
+Auth type: API Key or custom HTTP header
+Header key: Authorization
+Header value: Bearer <CAJAS MCP personal access token>
+```
+
+Create the token from your CAJAS account settings before connecting the MCP server. The token is shown only once, is scoped to the actual CAJAS user identity, and should be stored only in the MCP client's secret/header configuration. Do not publish or share it.
+
 Do not use a shared production token for multiple users. OAuth scopes only describe broad request categories; CAJAS workspace roles still decide whether a read or mutation is allowed.
 
 Workspace selection remains explicit. `cajas.list_workspaces` works without an `org_id`; workspace-scoped tools require `org_id`, which is forwarded as `x-org-id` and verified by CAJAS backend membership checks.

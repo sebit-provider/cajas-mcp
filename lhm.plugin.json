@@ -1,0 +1,31 @@
+{
+  "identifier": "cajas-mcp",
+  "name": "CAJAS MCP",
+  "version": "0.1.0",
+  "description": "Vendor-neutral MCP adapter for CAJAS accounting workflows. Requires a CAJAS account and a CAJAS MCP personal access token or OAuth-capable MCP client.",
+  "author": "SEBIT",
+  "homepage": "https://github.com/sebit-provider/cajas-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sebit-provider/cajas-mcp"
+  },
+  "license": "UNLICENSED",
+  "tags": [
+    "mcp",
+    "accounting",
+    "cajas",
+    "assembly",
+    "raw-import",
+    "coa"
+  ],
+  "mcp": {
+    "type": "http",
+    "url": "https://sebit-mcp.com/mcp",
+    "transport": "streamable-http",
+    "auth": {
+      "type": "bearer",
+      "header": "Authorization",
+      "description": "Use a CAJAS MCP personal access token from your CAJAS account settings. Header value format: Bearer <token>."
+    }
+  }
+}
