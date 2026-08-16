@@ -23,6 +23,7 @@
   "files": [
     "README.md",
     "lhm.plugin.json",
+    "assets/*",
     "docs/**/*.md",
     "src/**/*.py",
     "pyproject.toml",
